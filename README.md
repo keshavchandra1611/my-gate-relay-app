@@ -240,3 +240,10 @@ android.package: "com.keshav1611.myapp.dev"  # or QA / Prod
 ```
 
 ✅ This setup allows you to build **multiple environments** (Dev, QA, Prod) locally or via EAS with **dynamic assets, package names, and app names**.
+
+
+## 9. Android Folder Added
+
+```bash
+npx expo prebuild --platform android
+```

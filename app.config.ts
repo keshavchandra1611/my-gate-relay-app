@@ -5,7 +5,7 @@ type AppEnv = "dev" | "qa" | "prod";
 export default ({ config }: ConfigContext): ExpoConfig => {
   const ENV = (process.env.APP_ENV ?? "dev") as AppEnv;
 
-  const baseAssetPath = `./assets/${ENV}`; // <--- dynamic base folder
+  const baseAssetPath = `./assets/appImage`; // <--- base folder or dynamic -> `./assets/${ENV}`
 
   const appIds: Record<AppEnv, string> = {
     dev: "com.keshav1611.myapp.dev",

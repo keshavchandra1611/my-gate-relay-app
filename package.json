@@ -4,19 +4,21 @@
   "main": "index.ts",
   "scripts": {
     "start": "expo start",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
+    "android": "expo run:android --device",
+    "ios": "expo run:ios",
     "web": "expo start --web",
-    "build:dev": "eas build -p android --profile development --local --clear-cache",
-    "build:preview": "eas build -p android --profile preview --local --clear-cache",
-    "build:production": "eas build -p android --profile production_external --local --clear-cache",
-    "build:ext_production": "eas build -p android --profile production_external --local --clear-cache"
+    "build:dev": "APP_ENV=dev npx expo prebuild --platform android && eas build -p android --profile development --local --clear-cache",
+    "build:preview": "APP_ENV=qa npx expo prebuild --platform android && eas build -p android --profile preview --local --clear-cache",
+    "build:production": "APP_ENV=prod npx expo prebuild --platform android && eas build -p android --profile production_external --local --clear-cache",
+    "build:ext_production": "APP_ENV=prod npx expo prebuild --platform android && eas build -p android --profile production_external --local --clear-cache",
+    "installFresh:hard": "./android/gradlew --stop && rm -rf node_modules && rm -rf android/.cxx  && rm -rf android/app/.cxx && rm -rf android/app/build && rm -rf android/build && rm -rf android/.gradle &&  rm -rf ~/.gradle/caches  && rm -rf ~/.gradle/kotlin-dsl && npm i && APP_ENV=prod npx expo prebuild --platform android && cd android && ./gradlew clean && cd .."
   },
   "dependencies": {
     "expo": "~54.0.30",
     "expo-build-properties": "^1.0.10",
     "expo-dev-client": "~6.0.20",
     "expo-status-bar": "~3.0.9",
+    "expo-system-ui": "^55.0.9",
     "react": "19.1.0",
     "react-native": "0.81.5"
   },
