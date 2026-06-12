@@ -1,0 +1,1 @@
+type AppEnv = "dev" | "qa" | "prod";

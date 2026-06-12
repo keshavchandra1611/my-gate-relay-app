@@ -1,78 +1,57 @@
 import { ExpoConfig, ConfigContext } from "expo/config";
 
-type AppEnv = "dev" | "qa" | "prod";
+const {
+  APP_ID,
+  APP_NAME,
+  OWNER,
+  PROJECTID,
+  SLUG,
+  VERSION,
+  RUNTIMEVERSION,
+} = require("./AppVersions/version");
 
 export default ({ config }: ConfigContext): ExpoConfig => {
-  const ENV = (process.env.APP_ENV ?? "dev") as AppEnv;
-
-  const baseAssetPath = `./assets/appImage`; // <--- base folder or dynamic -> `./assets/${ENV}`
+  const ENV = (process.env.APP_ENV ?? "prod") as AppEnv;
 
   const appIds: Record<AppEnv, string> = {
-    dev: "com.keshav1611.myapp.dev",
-    qa: "com.keshav1611.myapp.qa",
-    prod: "com.keshav1611.myapp",
+    dev: `${APP_ID}.dev`,
+    qa: `${APP_ID}.qa`,
+    prod: `${APP_ID}`,
   };
 
   const appNames: Record<AppEnv, string> = {
-    dev: "MyApp Dev",
-    qa: "MyApp QA",
-    prod: "MyApp",
+    dev: `${APP_NAME} Dev`,
+    qa: `${APP_NAME} QA`,
+    prod: `${APP_NAME}`,
   };
 
-  const icons: Record<AppEnv, string> = {
-    dev: `${baseAssetPath}/icon.png`,
-    qa: `${baseAssetPath}/icon.png`,
-    prod: `${baseAssetPath}/icon.png`,
+  const baseAssetPath = `./assets/appImage`; // <--- base folder
+  const icon = `${baseAssetPath}/icon.png`;
+  const adaptiveIcon = {
+    foreground: `${baseAssetPath}/adaptive-icon.png`,
+    background: "#ffffff",
   };
-
-  const adaptiveIcons: Record<
-    AppEnv,
-    { foreground: string; background: string }
-  > = {
-    dev: {
-      foreground: `${baseAssetPath}/adaptive-icon.png`,
-      background: "#ffffff",
-    },
-    qa: {
-      foreground: `${baseAssetPath}/adaptive-icon.png`,
-      background: "#ffffff",
-    },
-    prod: {
-      foreground: `${baseAssetPath}/adaptive-icon.png`,
-      background: "#ffffff",
-    },
-  };
-
-  const splashImages: Record<AppEnv, string> = {
-    dev: `${baseAssetPath}/splash-icon.png`,
-    qa: `${baseAssetPath}/splash-icon.png`,
-    prod: `${baseAssetPath}/splash-icon.png`,
-  };
-
-  const favicons: Record<AppEnv, string> = {
-    dev: `${baseAssetPath}/favicon.png`,
-    qa: `${baseAssetPath}/favicon.png`,
-    prod: `${baseAssetPath}/favicon.png`,
-  };
+  const splashImage = `${baseAssetPath}/splash-icon.png`;
+  const favicon = `${baseAssetPath}/favicon.png`;
 
   return {
     ...config,
 
     // App identity
     name: appNames[ENV],
-    slug: "myapp",
-    owner: "keshav1611",
-    version: "1.0.0",
+    slug: SLUG,
+    owner: OWNER,
+    version: VERSION,
 
     // UI / behavior
-    orientation: "portrait",
+    orientation: "default",
     userInterfaceStyle: "light",
     newArchEnabled: true,
 
     // Assets
-    icon: icons[ENV],
+    icon: icon,
     splash: {
-      image: splashImages[ENV],
+      image: splashImage,
       resizeMode: "contain",
       backgroundColor: "#ffffff",
     },
@@ -84,17 +63,20 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     android: {
       ...config.android,
       package: appIds[ENV],
+      // @ts-expect-error — Expo supports this, typings are outdated
+      language: "java",
       adaptiveIcon: {
-        foregroundImage: adaptiveIcons[ENV].foreground,
-        backgroundColor: adaptiveIcons[ENV].background,
+        foregroundImage: adaptiveIcon.foreground,
+        backgroundColor: adaptiveIcon.background,
       },
       edgeToEdgeEnabled: true,
       predictiveBackGestureEnabled: false,
       jsEngine: "hermes", // enable Hermes
+      runtimeVersion: RUNTIMEVERSION,
     },
 
     web: {
-      favicon: favicons[ENV],
+      favicon: favicon,
     },
 
     // ✅ Plugins for Proguard / resource shrinking
@@ -117,7 +99,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     extra: {
       env: ENV,
       eas: {
-        projectId: "5f12c90a-bca1-4bfb-9d32-daf9990a63ba",
+        projectId: PROJECTID,
       },
     },
   };

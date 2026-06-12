@@ -1,4 +1,4 @@
-package com.keshav1611.myapp
+package com.keshav1611.myapp.dev
 
 import android.app.Application
 import android.content.res.Configuration

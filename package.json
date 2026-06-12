@@ -1,21 +1,24 @@
 {
   "name": "myapp",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "main": "index.ts",
   "scripts": {
     "start": "expo start",
-    "android": "expo run:android --device",
+    "android": "APP_ENV=dev sh -c 'npm run CleanThenBuild && npx expo prebuild --platform android && echo Using APP_ENV=$APP_ENV && expo run:android --device'",
     "ios": "expo run:ios",
     "web": "expo start --web",
-    "build:dev": "APP_ENV=dev npx expo prebuild --platform android && eas build -p android --profile development --local --clear-cache",
-    "build:preview": "APP_ENV=qa npx expo prebuild --platform android && eas build -p android --profile preview --local --clear-cache",
-    "build:production": "APP_ENV=prod npx expo prebuild --platform android && eas build -p android --profile production_external --local --clear-cache",
-    "build:ext_production": "APP_ENV=prod npx expo prebuild --platform android && eas build -p android --profile production_external --local --clear-cache",
-    "installFresh:hard": "./android/gradlew --stop && rm -rf node_modules && rm -rf android/.cxx  && rm -rf android/app/.cxx && rm -rf android/app/build && rm -rf android/build && rm -rf android/.gradle &&  rm -rf ~/.gradle/caches  && rm -rf ~/.gradle/kotlin-dsl && npm i && APP_ENV=prod npx expo prebuild --platform android && cd android && ./gradlew clean && cd .."
+    "build:dev": "APP_ENV=dev npx expo prebuild --platform android && npm run CleanThenBuild && eas build -p android --profile development --local --clear-cache",
+    "build:preview": "APP_ENV=qa npx expo prebuild --platform android && npm run CleanThenBuild && eas build -p android --profile preview --local --clear-cache",
+    "build:production": "APP_ENV=prod npx expo prebuild --platform android && npm run CleanThenBuild &&  eas build -p android --profile production --local --clear-cache",
+    "build:playstore_production": "npm run CleanThenBuild && APP_ENV=prod npx expo prebuild --platform android && eas build -p android --profile playstore_production --local --clear-cache",
+    "callInstallHard": "APP_ENV=dev npm run installFresh:hard",
+    "installFresh:hard": "echo Using APP_ENV=$APP_ENV && npx tsx ./AppVersions/UpdateVersion.ts && rm -rf node_modules && ./android/gradlew --stop && rm -rf android/.cxx  && rm -rf android/app/.cxx && rm -rf android/app/build && rm -rf android/build && rm -rf android/.gradle &&  rm -rf ~/.gradle/caches  && rm -rf ~/.gradle/kotlin-dsl && npm i && npx expo prebuild --platform android && cd android && ./gradlew clean && cd ..",
+    "CleanThenBuild": "./android/gradlew --stop && rm -rf android/.cxx  && rm -rf android/app/.cxx && cd android && ./gradlew clean && cd .. && npx tsx ./AppVersions/UpdateVersionCode.ts"
   },
   "dependencies": {
     "expo": "~54.0.30",
     "expo-build-properties": "^1.0.10",
+    "expo-constants": "~18.0.13",
     "expo-dev-client": "~6.0.20",
     "expo-status-bar": "~3.0.9",
     "expo-system-ui": "^55.0.9",
@@ -23,6 +26,7 @@
     "react-native": "0.81.5"
   },
   "devDependencies": {
+    "@types/node": "^25.9.3",
     "@types/react": "~19.1.0",
     "typescript": "~5.9.2"
   },

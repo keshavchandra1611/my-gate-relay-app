@@ -21,16 +21,22 @@
       "env": {
         "APP_ENV": "prod"
       },
-      "autoIncrement": true
-    },
-    "production_external": {
-      "env": {
-        "APP_ENV": "prod"
-      },
       "channel": "production",
       "android": {
         "buildType": "apk"
       }
+    },
+    "playstore_production": {
+      "env": {
+        "APP_ENV": "prod"
+      },
+      "channel": "production"
+    },
+    "explore_it_first": {
+      "env": {
+        "APP_ENV": "prod"
+      },
+      "autoIncrement": true
     }
   },
   "submit": {
