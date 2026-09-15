@@ -7,10 +7,17 @@ const {
   PROJECTID,
   SLUG,
   VERSION,
+  VERSION_CODE,
   RUNTIMEVERSION,
+  OTA_VERSION,
+  RELEASE_NOTES,
+  RELEASE_HEADER,
+  MANDATORY,
 } = require("./AppVersions/version");
 
+
 export default ({ config }: ConfigContext): ExpoConfig => {
+  // Default is "prod" when APP_ENV is not set (e.g. plain `expo start` / `expo prebuild`).
   const ENV = (process.env.APP_ENV ?? "prod") as AppEnv;
 
   const appIds: Record<AppEnv, string> = {
@@ -34,6 +41,13 @@ export default ({ config }: ConfigContext): ExpoConfig => {
   const splashImage = `${baseAssetPath}/splash-icon.png`;
   const favicon = `${baseAssetPath}/favicon.png`;
 
+  // EAS Update channel per environment (must match eas.json build profiles)
+  const updateChannels: Record<AppEnv, string> = {
+    dev: "development",
+    qa: "preview",
+    prod: "production",
+  };
+
   return {
     ...config,
 
@@ -47,6 +61,19 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     orientation: "default",
     userInterfaceStyle: "light",
     newArchEnabled: true,
+
+    // OTA updates (EAS Update)
+    runtimeVersion: RUNTIMEVERSION,
+    updates: {
+      url: `https://u.expo.dev/${PROJECTID}`,
+      // Launch instantly with the current bundle; the in-app modal drives the
+      // check / download / restart so the user can choose "Later".
+      fallbackToCacheTimeout: 0,
+      // checkAutomatically: "ALWAYS",
+      requestHeaders: {
+        "expo-channel-name": updateChannels[ENV],
+      },
+    },
 
     // Assets
     icon: icon,
@@ -72,7 +99,6 @@ export default ({ config }: ConfigContext): ExpoConfig => {
       edgeToEdgeEnabled: true,
       predictiveBackGestureEnabled: false,
       jsEngine: "hermes", // enable Hermes
-      runtimeVersion: RUNTIMEVERSION,
     },
 
     web: {
@@ -98,6 +124,11 @@ export default ({ config }: ConfigContext): ExpoConfig => {
 
     extra: {
       env: ENV,
+      otaVersion: OTA_VERSION,
+      versionCode: VERSION_CODE,
+      releaseNotes: RELEASE_NOTES,
+      mandatory: MANDATORY,
+      releaseHeader:RELEASE_HEADER,
       eas: {
         projectId: PROJECTID,
       },

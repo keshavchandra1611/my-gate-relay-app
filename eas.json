@@ -8,6 +8,7 @@
       "env": {
         "APP_ENV": "dev"
       },
+      "channel": "development",
       "developmentClient": true,
       "distribution": "internal"
     },
@@ -15,6 +16,7 @@
       "env": {
         "APP_ENV": "qa"
       },
+      "channel": "preview",
       "distribution": "internal"
     },
     "production": {
@@ -36,7 +38,8 @@
       "env": {
         "APP_ENV": "prod"
       },
-      "autoIncrement": true
+      "autoIncrement": true,
+      "channel": "explore_it_first"
     }
   },
   "submit": {
