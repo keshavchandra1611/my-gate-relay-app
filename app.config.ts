@@ -36,7 +36,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
   const icon = `${baseAssetPath}/icon.png`;
   const adaptiveIcon = {
     foreground: `${baseAssetPath}/adaptive-icon.png`,
-    background: "#ffffff",
+    background: "#0f172a",
   };
   const splashImage = `${baseAssetPath}/splash-icon.png`;
   const favicon = `${baseAssetPath}/favicon.png`;
@@ -59,7 +59,8 @@ export default ({ config }: ConfigContext): ExpoConfig => {
 
     // UI / behavior
     orientation: "default",
-    userInterfaceStyle: "light",
+    // "automatic" lets the in-app System / Light / Dark switch follow the device.
+    userInterfaceStyle: "automatic",
     newArchEnabled: true,
 
     // OTA updates (EAS Update)
@@ -69,7 +70,10 @@ export default ({ config }: ConfigContext): ExpoConfig => {
       // Launch instantly with the current bundle; the in-app modal drives the
       // check / download / restart so the user can choose "Later".
       fallbackToCacheTimeout: 0,
-      // checkAutomatically: "ALWAYS",
+      // Never download an update in the background. The app only checks on
+      // launch (see components/AppUpdates.tsx) and downloads/applies an update
+      // when the user taps "Update now". "Later" skips it until next launch.
+      checkAutomatically: "NEVER",
       requestHeaders: {
         "expo-channel-name": updateChannels[ENV],
       },

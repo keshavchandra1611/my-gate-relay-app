@@ -1,20 +1,18 @@
 // AppVersions/version.js
-const APP_ID = "com.keshav1611.myapp";
-const APP_NAME = "MyApp";
+const APP_ID = "com.keshav1611.rnstarter";
+const APP_NAME = "RN Multi Env Starter";
 
-const SLUG = "myapp";
+const SLUG = "rn-multi-env-starter";
 
 const VERSION = "1.0.0";
 const RUNTIMEVERSION = VERSION;
 const VERSION_CODE = 1;
 
 
-// const OWNER = "";
-// const PROJECTID = "";
-const OWNER = "keshav1611";
-// const PROJECTID = "b6a52104-b34a-4cc1-bad0-1a5814fd1440";
-const PROJECTID = "5f12c90a-bca1-4bfb-9d32-daf9990a63ba";
-
+// Your Expo account and EAS project. Fill these in before building or
+// publishing updates (run `npx eas init` to get a project id).
+const OWNER = "";
+const PROJECTID = "";
 
 
 // OTA release history. Add a NEW entry at the END every time you publish an
@@ -23,10 +21,10 @@ const PROJECTID = "5f12c90a-bca1-4bfb-9d32-daf9990a63ba";
 // `heading` is the title shown above the description (RELEASE_HEADER).
 const HISTORY = [
   {
-    version: "1.0.1.1",
-    heading: "What\'s new",
-    description: "• Initial OTA update support"
-  },
+    version: "1.0.1.0",
+    heading: "Init",
+    description: "• Initial release",
+  }
 ];
 
 // Latest = last item in the history array.

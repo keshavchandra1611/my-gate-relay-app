@@ -1,33 +1,45 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   ActivityIndicator,
   Animated,
   Easing,
   Modal,
   Pressable,
-  StyleProp,
   StyleSheet,
   Text,
   View,
-  ViewStyle,
 } from "react-native";
 import * as Updates from "expo-updates";
-import Constants from "expo-constants";
+import { ThemeColors, useTheme } from "../theme";
+import { PressableScale } from "./Motion";
 
 /**
- * AppUpdates — a single drop-in OTA component.
+ * AppUpdates — drop-in OTA update handling. Renders nothing but a dialog.
  *
- *   import AppUpdates from "./components/AppUpdates";
+ *   const updates = useRef<AppUpdatesHandle>(null);
  *   ...
- *   <AppUpdates />
+ *   <AppUpdates ref={updates} />
+ *   updates.current?.checkForUpdate();   // e.g. from a Settings row
  *
- * Mount it ONCE anywhere. It will:
- *  • silently check for an EAS Update on launch and pop an Update/Later modal
- *  • render a button that opens an "installed version" info modal
- *    (app version · version code · OTA version · release notes)
- *
- * No provider/context needed — everything lives in this file.
+ * Mount it ONCE. It will:
+ *  • silently check for an EAS Update on launch and, if there is one, show an
+ *    "Update now / Later" dialog. Nothing is downloaded unless the user taps
+ *    "Update now"; "Later" hides the prompt until the next app launch.
+ *  • expose `checkForUpdate()` for a manual check with visible feedback.
  */
+
+export type AppUpdatesHandle = {
+  /** Manual check: spinner, then Update/Later, "up to date" or an error. */
+  checkForUpdate: () => void;
+};
 
 type Step =
   | "checking"
@@ -35,15 +47,7 @@ type Step =
   | "downloading"
   | "ready"
   | "error"
-  | "uptodate"
-  | "current"; // read-only "what's installed" view
-
-type Props = {
-  /** Label for the single button. */
-  label?: string;
-  /** Optional style override for the button. */
-  style?: StyleProp<ViewStyle>;
-};
+  | "uptodate";
 
 /** Safely read a value from an available update's bundled app config extra. */
 function readManifestExtra(
@@ -78,57 +82,59 @@ function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer)) as Promise<T>;
 }
 
-export default function AppUpdates({
-  label = "App info & updates",
-  style,
-}: Props) {
+/**
+ * Turn a raw expo-updates error into something a user can act on.
+ * The common confusing one is a TLS failure caused by a wrong device clock
+ * ("Chain validation failed … Certificate not valid until …").
+ */
+function friendlyError(e: unknown): string {
+  const raw = e instanceof Error ? e.message : String(e);
+  if (
+    /certificate (is )?not (yet )?valid|certificate.*expired|timestamp check failed|chain validation failed/i.test(
+      raw
+    )
+  ) {
+    return "Your device's date and time look incorrect. Turn on automatic date & time in Settings, then try again.";
+  }
+  if (/network|unable to resolve host|failed to connect|timed out|timeout/i.test(raw)) {
+    return "Couldn't reach the update server. Check your internet connection and try again.";
+  }
+  return raw;
+}
+
+const AppUpdates = forwardRef<AppUpdatesHandle>(function AppUpdates(_, ref) {
   const {
-    currentlyRunning,
     availableUpdate,
     downloadedUpdate,
     isUpdateAvailable,
     isUpdatePending,
     isDownloading,
-    downloadError,
-    checkError,
   } = Updates.useUpdates();
-
-  // --- Installed (running) info -------------------------------------------
-  const appVersion = Constants.expoConfig?.version;
-  const versionCode = Constants.expoConfig?.extra?.versionCode as
-    | number
-    | undefined;
-  const currentVersion = Constants.expoConfig?.extra?.otaVersion as
-    | string
-    | undefined;
-  const currentNotes = Constants.expoConfig?.extra?.releaseNotes as
-    | string
-    | undefined;
-  const currentHeader = Constants.expoConfig?.extra?.releaseHeader as
-    | string
-    | undefined;
 
   // --- Incoming update info -----------------------------------------------
   // Before download it's `availableUpdate`; once downloaded it becomes
   // `downloadedUpdate` (the "ready" state) — read whichever is present.
   const incoming = availableUpdate ?? downloadedUpdate;
   const newVersion = readManifestExtra(incoming, "otaVersion");
-  const newNotes = readManifestExtra(incoming, "releaseNotes");
-  const newHeader = readManifestExtra(incoming, "releaseHeader");
-  const releaseDate = (incoming?.createdAt ??
-    currentlyRunning.createdAt) as Date | undefined;
+  const notes = readManifestExtra(incoming, "releaseNotes");
+  const notesHeading = readManifestExtra(incoming, "releaseHeader");
+  const releaseDate = incoming?.createdAt as Date | undefined;
   // Whether THIS incoming update is mandatory (set per release in version.js).
   const mandatory = Boolean(
     (incoming?.manifest as any)?.extra?.expoClient?.extra?.mandatory
   );
 
   const [visible, setVisible] = useState(false);
-  const [step, setStep] = useState<Step>("current");
+  const [step, setStep] = useState<Step>("checking");
   const [errorMsg, setErrorMsg] = useState<string>();
 
-  // --- Drive modal from hook flags ----------------------------------------
+  // --- Drive dialog from hook flags ---------------------------------------
+  // "Later" defers the prompt for the rest of this session. It's a ref (not
+  // persisted), so the next app launch starts fresh and asks again.
+  const deferredRef = useRef(false);
+
   useEffect(() => {
-    if (isUpdateAvailable) {
+    if (isUpdateAvailable && !deferredRef.current) {
       setStep("available");
       setVisible(true);
     }
@@ -145,12 +151,10 @@ export default function AppUpdates({
     }
   }, [isUpdatePending]);
 
-  useEffect(() => {
-    if (downloadError || checkError) {
-      setStep("error");
-      setVisible(true);
-    }
-  }, [downloadError, checkError]);
+  // NOTE: `checkError` / `downloadError` from the hook are deliberately NOT
+  // turned into a dialog. They also fire for the silent launch check, and a
+  // background failure (offline, wrong device clock…) must never interrupt
+  // the user. Errors from user-initiated actions are handled below.
 
   // --- Silent check on launch ---------------------------------------------
   useEffect(() => {
@@ -167,7 +171,7 @@ export default function AppUpdates({
     try {
       await withTimeout(Updates.fetchUpdateAsync(), 60000, "Download");
     } catch (e) {
-      setErrorMsg(e instanceof Error ? e.message : String(e));
+      setErrorMsg(friendlyError(e));
       setStep("error");
     }
   }, []);
@@ -176,12 +180,6 @@ export default function AppUpdates({
     await Updates.reloadAsync();
   }, []);
 
-  const showInfo = useCallback(() => {
-    setStep("current");
-    setVisible(true);
-  }, []);
-
-  // Manual "Check for updates": shows a spinner, then Update/Later or "up to date".
   const checkForUpdate = useCallback(async () => {
     if (__DEV__) {
       setStep("uptodate"); // OTA never runs in dev
@@ -199,56 +197,51 @@ export default function AppUpdates({
       );
       setStep(result.isAvailable ? "available" : "uptodate");
     } catch (e) {
-      setErrorMsg(e instanceof Error ? e.message : String(e));
+      setErrorMsg(friendlyError(e));
       setStep("error");
     }
   }, []);
 
+  useImperativeHandle(ref, () => ({ checkForUpdate }), [checkForUpdate]);
+
   const dismiss = useCallback(() => setVisible(false), []);
 
-  return (
-    <View style={style}>
-      <Pressable
-        onPress={showInfo}
-        style={({ pressed }) => [styles.mainButton, pressed && styles.pressed]}
-      >
-        <Text style={styles.mainButtonLabel}>{label}</Text>
-      </Pressable>
+  // "Later" on the update prompt: close it and don't auto-prompt again until
+  // the app is restarted. Nothing is downloaded or applied.
+  const later = useCallback(() => {
+    deferredRef.current = true;
+    setVisible(false);
+  }, []);
 
-      <UpdateDialog
-        visible={visible}
-        step={step}
-        error={errorMsg ?? (downloadError ?? checkError)?.message}
-        appVersion={appVersion}
-        versionCode={versionCode}
-        currentVersion={currentVersion}
-        newVersion={newVersion}
-        notes={step === "current" ? currentNotes : newNotes ?? currentNotes}
-        notesHeading={
-          step === "current" ? currentHeader : newHeader ?? currentHeader
-        }
-        releaseDate={releaseDate}
-        mandatory={mandatory}
-        onCheck={checkForUpdate}
-        onDownload={onDownload}
-        onRestart={onRestart}
-        onDismiss={dismiss}
-      />
-    </View>
+  return (
+    <UpdateDialog
+      visible={visible}
+      step={step}
+      error={errorMsg}
+      newVersion={newVersion}
+      notes={notes}
+      notesHeading={notesHeading}
+      releaseDate={releaseDate}
+      mandatory={mandatory}
+      onCheck={checkForUpdate}
+      onDownload={onDownload}
+      onRestart={onRestart}
+      onDismiss={dismiss}
+      onLater={later}
+    />
   );
-}
+});
+
+export default AppUpdates;
 
 // ===========================================================================
-// Modal dialog
+// Dialog
 // ===========================================================================
 
 type DialogProps = {
   visible: boolean;
   step: Step;
   error?: string;
-  appVersion?: string;
-  versionCode?: number;
-  currentVersion?: string;
   newVersion?: string;
   notes?: string;
   notesHeading?: string;
@@ -258,43 +251,33 @@ type DialogProps = {
   onDownload: () => void;
   onRestart: () => void;
   onDismiss: () => void;
+  onLater: () => void;
 };
 
-const COPY: Record<Step, { icon: string; title: string; body: string }> = {
+const COPY: Record<Step, { title: string; body: string }> = {
   checking: {
-    icon: "🔄",
     title: "Checking for updates",
     body: "Looking for the latest version…",
   },
   uptodate: {
-    icon: "👍",
     title: "You're up to date",
     body: "You're already running the latest version.",
   },
   available: {
-    icon: "✨",
     title: "Update available",
     body: "A new version is ready to download.",
   },
   downloading: {
-    icon: "⬇️",
     title: "Downloading update",
-    body: "Hang tight — this only takes a moment.",
+    body: "Please keep the app open. This only takes a moment.",
   },
   ready: {
-    icon: "✅",
     title: "Update ready",
     body: "Restart the app to apply the latest version.",
   },
   error: {
-    icon: "⚠️",
     title: "Update failed",
     body: "Something went wrong while updating.",
-  },
-  current: {
-    icon: "📱",
-    title: "App info",
-    body: "Here's the version you're currently running.",
   },
 };
 
@@ -302,9 +285,6 @@ function UpdateDialog({
   visible,
   step,
   error,
-  appVersion,
-  versionCode,
-  currentVersion,
   newVersion,
   notes,
   notesHeading,
@@ -314,164 +294,149 @@ function UpdateDialog({
   onDownload,
   onRestart,
   onDismiss,
+  onLater,
 }: DialogProps) {
+  const styles = useStyles();
+  const { colors } = useTheme();
   const anim = useRef(new Animated.Value(0)).current;
 
+  // Keep the Modal mounted until the fade-out finishes.
+  const [mounted, setMounted] = useState(visible);
+
   useEffect(() => {
+    if (visible) setMounted(true);
     Animated.timing(anim, {
       toValue: visible ? 1 : 0,
-      duration: 200,
+      duration: visible ? 300 : 180,
       easing: Easing.out(Easing.cubic),
       useNativeDriver: true,
-    }).start();
+    }).start(({ finished }) => {
+      if (finished && !visible) setMounted(false);
+    });
   }, [visible, anim]);
 
   const copy = COPY[step];
-  const spinner = step === "downloading" || step === "checking";
+  const busy = step === "downloading" || step === "checking";
   const inUpdateFlow =
     step === "available" || step === "downloading" || step === "ready";
   // Mandatory update → full-screen gate: opaque cover, no way out.
   const gate = !!mandatory && inUpdateFlow;
   const forced = step === "available" && !!mandatory;
-  const dismissable =
-    !gate &&
-    step !== "downloading" &&
-    step !== "ready" &&
-    step !== "checking";
+  const dismissable = !gate && !busy && step !== "ready";
+
+  // Back button / tapping outside the update prompt counts as "Later".
+  const closeDialog = step === "available" ? onLater : onDismiss;
+
+  const showUpdateInfo = step === "available" || step === "ready";
+  // "• one\n• two" → one bullet row per line.
+  const noteLines = (notes ?? "")
+    .split("\n")
+    .map((line) => line.replace(/^\s*[•\-*]\s*/, "").trim())
+    .filter(Boolean);
 
   return (
     <Modal
-      visible={visible}
+      visible={mounted}
       transparent
       animationType="none"
       statusBarTranslucent
-      onRequestClose={() => dismissable && onDismiss()}
+      onRequestClose={() => dismissable && closeDialog()}
     >
       <Animated.View
         style={[styles.backdrop, gate && styles.backdropGate, { opacity: anim }]}
       >
         <Pressable
           style={StyleSheet.absoluteFill}
-          onPress={() => dismissable && onDismiss()}
+          onPress={() => dismissable && closeDialog()}
         />
         <Animated.View
           style={[
-            styles.card,
+            styles.sheet,
             {
-              opacity: anim,
               transform: [
                 {
-                  scale: anim.interpolate({
+                  translateY: anim.interpolate({
                     inputRange: [0, 1],
-                    outputRange: [0.92, 1],
+                    outputRange: [80, 0],
                   }),
                 },
               ],
             },
           ]}
         >
-          <View style={styles.iconWrap}>
-            {spinner ? (
-              <ActivityIndicator size="large" color="#2563eb" />
-            ) : (
-              <Text style={styles.icon}>{copy.icon}</Text>
-            )}
-          </View>
+          <View style={styles.handle} />
 
-          <Text style={styles.title}>{copy.title}</Text>
+          <View style={styles.titleRow}>
+            <Text style={styles.title}>{copy.title}</Text>
+            {busy ? (
+              <ActivityIndicator size="small" color={colors.primary} />
+            ) : null}
+          </View>
           <Text style={styles.body}>
             {step === "error" && error ? error : copy.body}
           </Text>
 
-          {/* Installed-version details (info view) */}
-          {step === "current" ? (
-            <View style={styles.details}>
-              <DetailRow label="App version" value={appVersion} />
-              <DetailRow
-                label="Version code"
-                value={versionCode != null ? String(versionCode) : undefined}
-              />
-              <DetailRow label="OTA version" value={currentVersion} />
-            </View>
-          ) : null}
-
-          {/* Upcoming update version only */}
-          {step === "available" || step === "ready" ? (
-            <View style={styles.newVersionBox}>
-              <Text style={styles.versionLabel}>New version</Text>
-              <Text style={styles.newVersionValue}>{newVersion ?? "—"}</Text>
-            </View>
-          ) : null}
-
-          {/* What's new + release date */}
-          {(step === "available" || step === "ready" || step === "current") &&
-          (notes || releaseDate) ? (
-            <View style={styles.notesBox}>
-              {releaseDate ? (
-                <Text style={styles.notesDate}>
-                  Released {formatDate(releaseDate)}
-                </Text>
+          {showUpdateInfo && (newVersion || notes || releaseDate) ? (
+            <View style={styles.infoBox}>
+              {newVersion || releaseDate ? (
+                <View style={styles.infoHeader}>
+                  {newVersion ? (
+                    <Text style={styles.version}>Version {newVersion}</Text>
+                  ) : null}
+                  {releaseDate ? (
+                    <Text style={styles.date}>{formatDate(releaseDate)}</Text>
+                  ) : null}
+                </View>
               ) : null}
-              {notes ? (
+              {noteLines.length > 0 ? (
                 <>
                   <Text style={styles.notesHeading}>
                     {notesHeading || "What's new"}
                   </Text>
-                  <Text style={styles.notesText}>{notes}</Text>
+                  {noteLines.map((line, i) => (
+                    <View key={i} style={styles.noteRow}>
+                      <View style={styles.bullet} />
+                      <Text style={styles.notesText}>{line}</Text>
+                    </View>
+                  ))}
                 </>
               ) : null}
             </View>
           ) : null}
 
           {/* Actions */}
-          <View style={styles.actions}>
-            {step === "available" && (
-              <>
-                <PrimaryButton label="Update now" onPress={onDownload} />
-                {forced ? (
-                  <Text style={styles.hint}>This update is required.</Text>
-                ) : (
-                  <SecondaryButton label="Later" onPress={onDismiss} />
+          {step === "available" && (
+            <>
+              {forced ? (
+                <Text style={styles.hint}>This update is required.</Text>
+              ) : null}
+              <View style={styles.actions}>
+                {forced ? null : (
+                  <SecondaryButton label="Later" onPress={onLater} />
                 )}
-              </>
-            )}
-            {step === "checking" && (
-              <Text style={styles.hint}>Just a moment…</Text>
-            )}
-            {step === "downloading" && (
-              <Text style={styles.hint}>Please keep the app open…</Text>
-            )}
-            {step === "uptodate" && (
-              <PrimaryButton label="Got it" onPress={onDismiss} />
-            )}
-            {step === "ready" && (
+                <PrimaryButton label="Update now" onPress={onDownload} />
+              </View>
+            </>
+          )}
+          {step === "uptodate" && (
+            <View style={styles.actions}>
+              <PrimaryButton label="OK" onPress={onDismiss} />
+            </View>
+          )}
+          {step === "ready" && (
+            <View style={styles.actions}>
               <PrimaryButton label="Restart now" onPress={onRestart} />
-            )}
-            {step === "error" && (
-              <>
-                <PrimaryButton label="Try again" onPress={onCheck} />
-                <SecondaryButton label="Dismiss" onPress={onDismiss} />
-              </>
-            )}
-            {step === "current" && (
-              <>
-                <PrimaryButton label="Check for updates" onPress={onCheck} />
-                <SecondaryButton label="Close" onPress={onDismiss} />
-              </>
-            )}
-          </View>
+            </View>
+          )}
+          {step === "error" && (
+            <View style={styles.actions}>
+              <SecondaryButton label="Dismiss" onPress={onDismiss} />
+              <PrimaryButton label="Try again" onPress={onCheck} />
+            </View>
+          )}
         </Animated.View>
       </Animated.View>
     </Modal>
-  );
-}
-
-function DetailRow({ label, value }: { label: string; value?: string }) {
-  return (
-    <View style={styles.detailRow}>
-      <Text style={styles.detailLabel}>{label}</Text>
-      <Text style={styles.detailValue}>{value ?? "—"}</Text>
-    </View>
   );
 }
 
@@ -482,13 +447,16 @@ function PrimaryButton({
   label: string;
   onPress: () => void;
 }) {
+  const styles = useStyles();
   return (
-    <Pressable
+    <PressableScale
       onPress={onPress}
-      style={({ pressed }) => [styles.primaryBtn, pressed && styles.pressed]}
+      containerStyle={styles.btnSlot}
+      style={styles.primaryBtn}
+      accessibilityRole="button"
     >
       <Text style={styles.primaryLabel}>{label}</Text>
-    </Pressable>
+    </PressableScale>
   );
 }
 
@@ -499,145 +467,167 @@ function SecondaryButton({
   label: string;
   onPress: () => void;
 }) {
+  const styles = useStyles();
   return (
-    <Pressable
+    <PressableScale
       onPress={onPress}
-      style={({ pressed }) => [styles.secondaryBtn, pressed && styles.pressed]}
+      containerStyle={styles.btnSlot}
+      style={styles.secondaryBtn}
+      accessibilityRole="button"
     >
       <Text style={styles.secondaryLabel}>{label}</Text>
-    </Pressable>
+    </PressableScale>
   );
 }
 
-const styles = StyleSheet.create({
-  mainButton: {
-    backgroundColor: "#2563eb",
-    borderRadius: 12,
-    paddingVertical: 14,
-    paddingHorizontal: 28,
-    minWidth: 240,
-    alignItems: "center",
-  },
-  mainButtonLabel: {
-    color: "#fff",
-    fontSize: 15,
-    fontWeight: "600",
-  },
-  backdrop: {
-    flex: 1,
-    backgroundColor: "rgba(15, 23, 42, 0.55)",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 24,
-  },
-  // Opaque cover for a mandatory update — fully hides the app behind it.
-  backdropGate: {
-    backgroundColor: "#0f172a",
-  },
-  card: {
-    width: "100%",
-    maxWidth: 360,
-    backgroundColor: "#fff",
-    borderRadius: 20,
-    paddingHorizontal: 24,
-    paddingTop: 28,
-    paddingBottom: 20,
-    alignItems: "center",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.18,
-    shadowRadius: 24,
-    elevation: 12,
-  },
-  iconWrap: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: "#eff6ff",
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 16,
-  },
-  icon: { fontSize: 30 },
-  title: {
-    fontSize: 19,
-    fontWeight: "700",
-    color: "#0f172a",
-    textAlign: "center",
-    marginBottom: 6,
-  },
-  body: {
-    fontSize: 14,
-    lineHeight: 20,
-    color: "#64748b",
-    textAlign: "center",
-    marginBottom: 20,
-  },
-  details: {
-    width: "100%",
-    backgroundColor: "#f8fafc",
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    marginBottom: 16,
-  },
-  detailRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingVertical: 8,
-  },
-  detailLabel: { fontSize: 13, color: "#64748b" },
-  detailValue: { fontSize: 13, fontWeight: "600", color: "#0f172a" },
-  newVersionBox: {
-    alignItems: "center",
-    marginBottom: 16,
-  },
-  versionLabel: {
-    fontSize: 11,
-    fontWeight: "600",
-    color: "#94a3b8",
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-    marginBottom: 2,
-  },
-  newVersionValue: { fontSize: 20, fontWeight: "800", color: "#2563eb" },
-  notesBox: {
-    width: "100%",
-    backgroundColor: "#f8fafc",
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 20,
-    gap: 4,
-  },
-  notesDate: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#94a3b8",
-    marginBottom: 4,
-  },
-  notesHeading: { fontSize: 13, fontWeight: "700", color: "#334155" },
-  notesText: { fontSize: 13, lineHeight: 20, color: "#475569" },
-  actions: { width: "100%", gap: 10 },
-  hint: {
-    fontSize: 13,
-    color: "#94a3b8",
-    textAlign: "center",
-    paddingVertical: 8,
-  },
-  primaryBtn: {
-    backgroundColor: "#2563eb",
-    borderRadius: 12,
-    paddingVertical: 14,
-    alignItems: "center",
-  },
-  primaryLabel: { color: "#fff", fontSize: 15, fontWeight: "600" },
-  secondaryBtn: {
-    backgroundColor: "transparent",
-    borderRadius: 12,
-    paddingVertical: 12,
-    alignItems: "center",
-  },
-  secondaryLabel: { color: "#64748b", fontSize: 15, fontWeight: "500" },
-  pressed: { opacity: 0.7 },
-});
+const makeStyles = (c: ThemeColors) =>
+  StyleSheet.create({
+    backdrop: {
+      flex: 1,
+      backgroundColor: c.backdrop,
+      justifyContent: "flex-end",
+      alignItems: "center",
+    },
+    // Opaque cover for a mandatory update — fully hides the app behind it.
+    backdropGate: {
+      backgroundColor: c.gate,
+    },
+    // Bottom sheet
+    sheet: {
+      width: "100%",
+      maxWidth: 520,
+      backgroundColor: c.card,
+      borderTopLeftRadius: 28,
+      borderTopRightRadius: 28,
+      borderWidth: 1,
+      borderBottomWidth: 0,
+      borderColor: c.border,
+      paddingHorizontal: 22,
+      paddingTop: 10,
+      paddingBottom: 34,
+      shadowColor: c.shadow,
+      shadowOffset: { width: 0, height: -6 },
+      shadowOpacity: 0.12,
+      shadowRadius: 20,
+      elevation: 16,
+    },
+    handle: {
+      alignSelf: "center",
+      width: 38,
+      height: 4,
+      borderRadius: 2,
+      backgroundColor: c.border,
+      marginBottom: 20,
+    },
+    titleRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: 12,
+      marginBottom: 6,
+    },
+    title: {
+      flexShrink: 1,
+      color: c.text,
+      fontSize: 21,
+      fontWeight: "700",
+      letterSpacing: -0.4,
+    },
+    body: {
+      color: c.textMuted,
+      fontSize: 14,
+      lineHeight: 21,
+    },
+    infoBox: {
+      marginTop: 18,
+      backgroundColor: c.surface,
+      borderRadius: 16,
+      padding: 16,
+    },
+    infoHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: 12,
+      marginBottom: 10,
+    },
+    version: {
+      color: c.primary,
+      fontSize: 13,
+      fontWeight: "700",
+      backgroundColor: c.primarySoft,
+      paddingHorizontal: 10,
+      paddingVertical: 4,
+      borderRadius: 999,
+      overflow: "hidden",
+    },
+    date: {
+      color: c.textMuted,
+      fontSize: 12,
+    },
+    notesHeading: {
+      color: c.text,
+      fontSize: 14,
+      fontWeight: "700",
+    },
+    noteRow: {
+      flexDirection: "row",
+      alignItems: "flex-start",
+      marginTop: 6,
+    },
+    bullet: {
+      width: 5,
+      height: 5,
+      borderRadius: 3,
+      backgroundColor: c.primary,
+      marginTop: 8,
+      marginRight: 10,
+    },
+    notesText: {
+      flex: 1,
+      color: c.textBody,
+      fontSize: 14,
+      lineHeight: 21,
+    },
+    actions: {
+      flexDirection: "row",
+      gap: 10,
+      marginTop: 22,
+    },
+    btnSlot: {
+      flex: 1,
+    },
+    hint: {
+      marginTop: 14,
+      color: c.textMuted,
+      fontSize: 13,
+    },
+    primaryBtn: {
+      backgroundColor: c.primary,
+      borderRadius: 14,
+      paddingVertical: 14,
+      alignItems: "center",
+    },
+    primaryLabel: {
+      color: c.onPrimary,
+      fontSize: 15,
+      fontWeight: "700",
+    },
+    secondaryBtn: {
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: c.border,
+      paddingVertical: 13,
+      alignItems: "center",
+    },
+    secondaryLabel: {
+      color: c.textStrong,
+      fontSize: 15,
+      fontWeight: "600",
+    },
+  });
+
+function useStyles() {
+  const { colors } = useTheme();
+  return useMemo(() => makeStyles(colors), [colors]);
+}
