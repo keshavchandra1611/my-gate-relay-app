@@ -32,6 +32,12 @@ const HISTORY = [
     description:
       "• Theme: choose System, Light or Dark in Settings (top-right button).\n• Auto Theme: the app now follows your phone's light/dark setting.",
   },
+  {
+    version: "1.3.0.2",
+    heading: "What's New",
+    description:
+      "• PIN Entry: the PIN boxes now stay visible above the keyboard.",
+  },
 ];
 
 // Latest = last item in the history array.

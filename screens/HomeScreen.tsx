@@ -23,12 +23,15 @@
  *
  * IMPORTANT: BASE_TOPIC (env.json) must match BASE_TOPIC in the firmware.
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   Easing,
+  Keyboard,
+  KeyboardAvoidingView,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -86,6 +89,7 @@ export default function HomeScreen({ onOpenSettings }: { onOpenSettings: () => v
   const timers = useRef<{ fallback?: ReturnType<typeof setTimeout>; reset?: ReturnType<typeof setTimeout> }>({});
   const pinRef = useRef(''); // latest PIN for the MQTT callback
   const waitingChallenge = useRef(false); // true after we sent HELLO and expect a challenge
+  const scrollRef = useRef<React.ComponentRef<typeof ScrollView>>(null);
   const { colors, scheme } = useTheme();
   const [connected, setConnected] = useState(false);
   const [deviceOnline, setDeviceOnline] = useState(false);
@@ -98,6 +102,12 @@ export default function HomeScreen({ onOpenSettings }: { onOpenSettings: () => v
   const C = useMemo(() => makePalette(colors, scheme), [colors, scheme]);
   const styles = useMemo(() => makeStyles(C), [C]);
   pinRef.current = pin;
+
+  // when the keyboard opens, scroll down so the PIN boxes and Open Gate stay visible
+  useEffect(() => {
+    const sub = Keyboard.addListener('keyboardDidShow', () => setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 80));
+    return () => sub.remove();
+  }, []);
 
   // staggered entrance
   const intro = useRef(new Animated.Value(0)).current;
@@ -276,7 +286,13 @@ export default function HomeScreen({ onOpenSettings }: { onOpenSettings: () => v
     <View style={styles.container}>
       <Aurora colors={[accent, C.violet]} opacity={C.aurora} />
 
-      <View style={styles.content}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
+      <ScrollView
+        ref={scrollRef}
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
         <Animated.View style={[styles.header, enter(0)]}>
           <View>
             <Text style={styles.title}>{Constants.expoConfig?.name}</Text>
@@ -339,7 +355,8 @@ export default function HomeScreen({ onOpenSettings }: { onOpenSettings: () => v
             ))
           )}
         </Animated.View>
-      </View>
+      </ScrollView>
+      </KeyboardAvoidingView>
     </View>
   );
 }
@@ -612,7 +629,7 @@ const makeStyles = (C: Palette) =>
   StyleSheet.create({
     container: { flex: 1, backgroundColor: C.bg },
     content: {
-      flex: 1,
+      flexGrow: 1,
       paddingHorizontal: 20,
       paddingTop: Constants.statusBarHeight + 12,
       paddingBottom: 24,
