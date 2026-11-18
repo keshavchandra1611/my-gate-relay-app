@@ -4,9 +4,9 @@ const APP_NAME = "My Gate";
 
 const SLUG = "relay-app";
 
-const VERSION = "1.1.0";
+const VERSION = "1.2.0";
 const RUNTIMEVERSION = VERSION;
-const VERSION_CODE = 2;
+const VERSION_CODE = 3;
 
 
 // Your Expo account and EAS project. Fill these in before building or

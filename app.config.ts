@@ -36,7 +36,9 @@ export default ({ config }: ConfigContext): ExpoConfig => {
   const icon = `${baseAssetPath}/icon.png`;
   const adaptiveIcon = {
     foreground: `${baseAssetPath}/adaptive-icon.png`,
-    background: "#0f172a",
+    backgroundImage: `${baseAssetPath}/adaptive-icon-background.png`,
+    monochrome: `${baseAssetPath}/adaptive-icon-monochrome.png`,
+    background: "#1d4ed8",
   };
   const splashImage = `${baseAssetPath}/splash-icon.png`;
   const favicon = `${baseAssetPath}/favicon.png`;
@@ -84,7 +86,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     splash: {
       image: splashImage,
       resizeMode: "contain",
-      backgroundColor: "#ffffff",
+      backgroundColor: "#0a0e1c",
     },
 
     ios: {
@@ -98,6 +100,8 @@ export default ({ config }: ConfigContext): ExpoConfig => {
       language: "java",
       adaptiveIcon: {
         foregroundImage: adaptiveIcon.foreground,
+        backgroundImage: adaptiveIcon.backgroundImage,
+        monochromeImage: adaptiveIcon.monochrome,
         backgroundColor: adaptiveIcon.background,
       },
       edgeToEdgeEnabled: true,
@@ -111,6 +115,15 @@ export default ({ config }: ConfigContext): ExpoConfig => {
 
     // ✅ Plugins for Proguard / resource shrinking
     plugins: [
+      // Native splash: same logo, size and colour as components/Splash.tsx
+      [
+        "expo-splash-screen",
+        {
+          backgroundColor: "#0a0e1c",
+          image: splashImage,
+          imageWidth: 220,
+        },
+      ],
       [
         "expo-build-properties",
         {

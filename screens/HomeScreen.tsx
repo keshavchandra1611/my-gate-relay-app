@@ -1,14 +1,20 @@
 /*
- * My Gate - React Native / Expo app v1.1.0 - gate screen (the starter's Home screen).
+ * My Gate - React Native / Expo app v1.2.0 - gate screen (the starter's Home screen).
  *
  * One tap opens the gate. Talks to the ESP8266 firmware over MQTT (WebSocket + TLS).
- *   Publishes to  <BASE>/cmd     : "OPEN:<4-digit PIN>"
- *   Reads from    <BASE>/gate    : "OPENING" | "OPEN"      (OPEN = relay off again, gate is open)
- *   Reads from    <BASE>/result  : "OK" | "WRONG_PIN" | "LOCKED" | "BUSY"
- *   Reads from    <BASE>/online  : "1" | "0"               (retained, last will)
+ * The PIN is never sent. Flow: app sends "HELLO", the device answers with a one-time
+ * challenge, the app replies "OPEN:<HMAC-SHA256(APP_SECRET, challenge:PIN)>".
+ *   Publishes to  <BASE>/cmd        : "HELLO" | "OPEN:<hmac hex>"
+ *   Reads from    <BASE>/challenge  : one-time random challenge
+ *   Reads from    <BASE>/gate       : "OPENING" | "OPEN"   (OPEN = relay off again, gate is open)
+ *   Reads from    <BASE>/result     : "OK" | "WRONG_PIN" | "LOCKED" | "BUSY" | "COOLDOWN" | "EXPIRED"
+ *   Reads from    <BASE>/fault      : device safety events (relay forced off, reset, ...)
+ *   Reads from    <BASE>/online     : "1" | "0"            (retained, last will)
  *
  * While the gate is opening / open the button is locked; it unlocks when the
  * "gate is open" status goes off again (the notification vanishes).
+ *
+ * Commands are only sent while the gate device is online (green "Device" pill).
  *
  * UI: drifting aurora background, breathing / rippling gate button, animated PIN boxes with
  * shake on a wrong PIN. Uses only the built-in React Native Animated API. Theme, settings and
@@ -30,6 +36,7 @@ import {
 import Constants from 'expo-constants';
 import mqtt from 'mqtt';
 import type { MqttClient } from 'mqtt';
+import { sha256 } from 'js-sha256';
 import { SettingsIcon } from '../components/Icons';
 import { PressableScale } from '../components/Motion';
 import { ThemeColors, ThemeScheme, useTheme } from '../theme';
@@ -40,11 +47,14 @@ const BROKER_URL = env.MQTT_URL;
 const MQTT_USERNAME = env.MQTT_USERNAME;
 const MQTT_PASSWORD = env.MQTT_PASSWORD;
 const BASE_TOPIC = env.BASE_TOPIC;
+const APP_SECRET = env.APP_SECRET; // must equal APP_SECRET in the firmware
 
 const T_CMD = `${BASE_TOPIC}/cmd`;
 const T_GATE = `${BASE_TOPIC}/gate`;
 const T_ONLINE = `${BASE_TOPIC}/online`;
 const T_RESULT = `${BASE_TOPIC}/result`;
+const T_CHALLENGE = `${BASE_TOPIC}/challenge`;
+const T_FAULT = `${BASE_TOPIC}/fault`;
 
 const NO_RESPONSE_MS = 6000; // give up waiting for the gate after this long
 const OPEN_SHOWN_MS = 4000; // how long "Gate open" stays on screen (button locked)
@@ -73,6 +83,8 @@ type Styles = ReturnType<typeof makeStyles>;
 export default function HomeScreen({ onOpenSettings }: { onOpenSettings: () => void }) {
   const clientRef = useRef<MqttClient | null>(null);
   const timers = useRef<{ fallback?: ReturnType<typeof setTimeout>; reset?: ReturnType<typeof setTimeout> }>({});
+  const pinRef = useRef(''); // latest PIN for the MQTT callback
+  const waitingChallenge = useRef(false); // true after we sent HELLO and expect a challenge
   const { colors, scheme } = useTheme();
   const [connected, setConnected] = useState(false);
   const [deviceOnline, setDeviceOnline] = useState(false);
@@ -84,6 +96,7 @@ export default function HomeScreen({ onOpenSettings }: { onOpenSettings: () => v
 
   const C = useMemo(() => makePalette(colors, scheme), [colors, scheme]);
   const styles = useMemo(() => makeStyles(C), [C]);
+  pinRef.current = pin;
 
   // staggered entrance
   const intro = useRef(new Animated.Value(0)).current;
@@ -109,8 +122,8 @@ export default function HomeScreen({ onOpenSettings }: { onOpenSettings: () => v
   };
 
   useEffect(() => {
-    if (!BROKER_URL || !BASE_TOPIC) {
-      addLog('missing values in env.json (MQTT_URL / BASE_TOPIC)');
+    if (!BROKER_URL || !BASE_TOPIC || !APP_SECRET) {
+      addLog('missing values in env.json (MQTT_URL / BASE_TOPIC / APP_SECRET)');
       return;
     }
     const client = mqtt.connect(BROKER_URL, {
@@ -126,7 +139,7 @@ export default function HomeScreen({ onOpenSettings }: { onOpenSettings: () => v
     client.on('connect', () => {
       setConnected(true);
       addLog('connected to broker');
-      client.subscribe([T_GATE, T_ONLINE, T_RESULT]);
+      client.subscribe([T_GATE, T_ONLINE, T_RESULT, T_CHALLENGE, T_FAULT]);
     });
     client.on('reconnect', () => addLog('reconnecting...'));
     client.on('offline', () => addLog('offline'));
@@ -137,11 +150,29 @@ export default function HomeScreen({ onOpenSettings }: { onOpenSettings: () => v
     });
     client.on('error', (e: Error) => addLog(`error: ${e.message}`));
     client.on('message', (topic: string, payload: Uint8Array) => {
-      const text = payload.toString().trim().toUpperCase();
+      const raw = payload.toString().trim();
+      const text = raw.toUpperCase();
 
-      if (topic === T_ONLINE) {
+      if (topic === T_CHALLENGE) {
+        // answer only a challenge we asked for; the PIN itself is never sent
+        if (!waitingChallenge.current) return;
+        waitingChallenge.current = false;
+        const answer = sha256.hmac(APP_SECRET, `${raw}:${pinRef.current}`);
+        client.publish(T_CMD, `OPEN:${answer}`, { qos: 1 });
+        addLog('answered challenge');
+      } else if (topic === T_FAULT) {
+        addLog(`fault ${text}`);
+        setNotice({ text: `Gate fault: ${text.replace(/_/g, ' ').toLowerCase()}`, ok: false });
+      } else if (topic === T_ONLINE) {
         setDeviceOnline(text === '1');
         addLog(`device ${text === '1' ? 'online' : 'offline'}`);
+        if (text !== '1' && waitingChallenge.current) {
+          // device dropped while we were waiting for its challenge: cancel the request
+          waitingChallenge.current = false;
+          clearTimeout(timers.current.fallback);
+          setGate('idle');
+          setNotice({ text: 'Gate device went offline', ok: false });
+        }
       } else if (topic === T_GATE) {
         addLog(`gate ${text}`);
         if (text === 'OPENING') {
@@ -159,13 +190,17 @@ export default function HomeScreen({ onOpenSettings }: { onOpenSettings: () => v
         }
       } else if (topic === T_RESULT) {
         addLog(`result ${text}`);
-        if (text === 'WRONG_PIN' || text === 'LOCKED' || text === 'BUSY') {
+        if (['WRONG_PIN', 'LOCKED', 'BUSY', 'COOLDOWN', 'EXPIRED', 'UNKNOWN'].includes(text)) {
           clearTimeout(timers.current.fallback);
+          waitingChallenge.current = false;
           setGate('idle');
           if (text === 'WRONG_PIN') setNotice({ text: 'Wrong PIN', ok: false });
-          if (text === 'LOCKED') setNotice({ text: 'Too many wrong PINs. Locked for 30 seconds', ok: false });
+          if (text === 'LOCKED') setNotice({ text: 'Too many wrong PINs. Locked for a while', ok: false });
           if (text === 'BUSY') setNotice({ text: 'Gate is busy, try again in a moment', ok: false });
-          if (text !== 'BUSY') {
+          if (text === 'COOLDOWN') setNotice({ text: 'Please wait a few seconds', ok: false });
+          if (text === 'EXPIRED') setNotice({ text: 'Request expired, tap again', ok: false });
+          if (text === 'UNKNOWN') setNotice({ text: 'Gate did not understand, tap again', ok: false });
+          if (text === 'WRONG_PIN' || text === 'LOCKED') {
             setPin('');
             setShakeKey((k) => k + 1);
           }
@@ -191,27 +226,37 @@ export default function HomeScreen({ onOpenSettings }: { onOpenSettings: () => v
       setShakeKey((k) => k + 1);
       return;
     }
+    if (!deviceOnline) {
+      // the gate device is not connected: send nothing
+      setNotice({ text: 'Gate device is offline', ok: false });
+      addLog('gate device offline, command not sent');
+      return;
+    }
     if (gate !== 'idle') return; // busy: wait until the gate-open status is off again
 
     setNotice(null);
     setGate('opening');
-    client.publish(T_CMD, `OPEN:${pin}`, { qos: 1 }); // the PIN is never logged
-    addLog('sent OPEN');
+    waitingChallenge.current = true;
+    client.publish(T_CMD, 'HELLO', { qos: 1 }); // ask for a one-time challenge; the PIN is never sent
+    addLog('asked the gate for a challenge');
 
     clearTimeout(timers.current.fallback);
     timers.current.fallback = setTimeout(() => {
+      waitingChallenge.current = false;
       setGate('idle');
       setNotice({ text: 'No response from the gate', ok: false });
       addLog('no response from the gate');
     }, NO_RESPONSE_MS);
   };
 
-  const canOpen = connected && pin.length === 4 && gate === 'idle';
+  const canOpen = connected && deviceOnline && pin.length === 4 && gate === 'idle';
   const accent = gate === 'open' ? C.on : gate === 'opening' ? C.amber : C.primary;
   const label = gate === 'open' ? 'GATE OPEN' : gate === 'opening' ? 'OPENING...' : 'OPEN GATE';
   const hint = !connected
     ? 'Waiting for broker'
-    : gate !== 'idle'
+    : !deviceOnline
+      ? 'Gate device offline'
+      : gate !== 'idle'
       ? 'Please wait'
       : pin.length !== 4
         ? 'Enter PIN to enable'

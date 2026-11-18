@@ -9,6 +9,7 @@ import {
   useWindowDimensions,
 } from "react-native";
 import AppUpdates, { AppUpdatesHandle } from "./components/AppUpdates";
+import Splash from "./components/Splash";
 import HomeScreen from "./screens/HomeScreen";
 import SettingsScreen from "./screens/SettingsScreen";
 import { ThemeProvider, useTheme } from "./theme";
@@ -25,6 +26,7 @@ function Root() {
   const { colors, isDark } = useTheme();
   const { width } = useWindowDimensions();
   const updates = useRef<AppUpdatesHandle>(null);
+  const [showSplash, setShowSplash] = useState(true);
 
   // Two screens only, so a tiny hand-rolled push/pop is enough: Settings
   // slides in from the right while Home eases back slightly.
@@ -111,7 +113,10 @@ function Root() {
       <AppUpdates ref={updates} />
 
       <ThemeFade />
-      <StatusBar style={isDark ? "light" : "dark"} />
+
+      {/* Animated splash: takes over from the native one, then fades out. */}
+      {showSplash ? <Splash onDone={() => setShowSplash(false)} /> : null}
+      <StatusBar style={isDark || showSplash ? "light" : "dark"} />
     </View>
   );
 }
