@@ -1,6 +1,6 @@
 {
   "name": "relay-app",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "main": "index.ts",
   "scripts": {
     "start": "expo start",
@@ -21,6 +21,7 @@
     "CleanThenBuild": "./android/gradlew --stop && rm -rf android/.cxx  && rm -rf android/app/.cxx && cd android && ./gradlew clean && cd .. && rm -rf android/build/generated/autolinking android/app/build/generated/autolinking && npx tsx ./AppVersions/UpdateVersionCode.ts"
   },
   "dependencies": {
+    "@noble/ciphers": "^2.4.0",
     "expo": "~54.0.30",
     "expo-build-properties": "^1.0.10",
     "expo-constants": "~18.0.13",

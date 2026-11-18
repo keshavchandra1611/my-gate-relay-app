@@ -1,16 +1,16 @@
 /*
- * My Gate Relay Firmware v1.2.0
+ * My Gate Relay Firmware v1.3.0
  * ESP8266 gate opener: the app can open the gate with one tap, nothing else can.
  *
  * What this code does:
- *   Connects to WiFi and an MQTT broker (TLS). The app asks for a one-time challenge,
- *   answers it with HMAC-SHA256(APP_SECRET, challenge ":" PIN), and if the answer is
- *   right the relay turns ON for OPEN_MS (1 second), then OFF. The firmware then
- *   publishes "OPEN" ("relay is off again, the gate is open").
+ *   Connects to WiFi and an MQTT broker (TLS). The app asks for a one-time challenge and
+ *   sends the PIN ENCRYPTED (AES-256-GCM). The firmware decrypts it; if the PIN is right the
+ *   relay turns ON for OPEN_MS (1 second), then OFF. The firmware then publishes "OPEN"
+ *   ("relay is off again, the gate is open"). The broker only ever sees ciphertext.
  *
  * MQTT topics (BASE_TOPIC must match relay-app/env.json):
  *   <BASE>/cmd        (subscribe)  "HELLO"            ask for a challenge
- *                                  "OPEN:<hmac hex>"  answer the challenge
+ *                                  "OPEN:<hex>"       encrypted PIN: hex(ciphertext + 16-byte tag)
  *   <BASE>/challenge  (publish)    one-time random challenge (valid NONCE_MS, used once)
  *   <BASE>/gate       (publish)    "OPENING" relay on, "OPEN" relay off again (gate is open)
  *   <BASE>/result     (publish)    "OK" | "WRONG_PIN" | "LOCKED" | "BUSY" | "COOLDOWN" |
@@ -21,8 +21,10 @@
  *   <BASE>/online     (publish, retained)  "1" when connected, "0" via last will
  *
  * Security:
- *   - The PIN is never sent. Every open needs a fresh challenge, so a recorded message
- *     cannot be replayed. Without APP_SECRET and the PIN nobody can answer correctly.
+ *   - The PIN is sent encrypted with AES-256-GCM: key = SHA-256(APP_SECRET) (never sent),
+ *     iv = first 12 bytes of the challenge, aad = the 16-byte challenge. The broker cannot
+ *     read or change it. Every open needs a fresh challenge, so a recorded message cannot
+ *     be replayed.
  *   - Wrong answers lock MQTT commands: 30 s, doubling each time up to 15 min.
  *   - There is NO Serial input and no other way to open the gate: only the app can.
  *   - Limit: APP_SECRET is stored inside the app, so anyone who extracts it from the APK
@@ -56,7 +58,7 @@
 
 // ---------- settings ----------
 #define FW_NAME          "My Gate Relay Firmware"
-#define FW_VERSION       "1.2.0"
+#define FW_VERSION       "1.3.0"
 
 #define WIFI_SSID        "YOUR_WIFI_NAME"
 #define WIFI_PASS        "YOUR_WIFI_PASSWORD"
@@ -102,7 +104,8 @@ unsigned long lastPulseEnd = 0;
 unsigned long openWindowStart = 0;
 int opensInWindow = 0;
 
-String nonce = "";
+uint8_t nonceBytes[16];
+bool nonceActive = false;
 unsigned long nonceExpires = 0;
 unsigned long lastHello = 0;
 int wrongCount = 0;
@@ -196,17 +199,47 @@ void servicePulse() {
 }
 
 // ---------- challenge / response ----------
-String hmacHex(const String &key, const String &msg) {
-  br_hmac_key_context kc;
-  br_hmac_key_init(&kc, &br_sha256_vtable, key.c_str(), key.length());
-  br_hmac_context ctx;
-  br_hmac_init(&ctx, &kc, 0);
-  br_hmac_update(&ctx, msg.c_str(), msg.length());
-  uint8_t out[32];
-  br_hmac_out(&ctx, out);
-  char hex[65];
-  for (int i = 0; i < 32; i++) sprintf(hex + i * 2, "%02x", out[i]);
-  return String(hex);
+bool hexToBytes(const String &hex, uint8_t *out, size_t maxLen, size_t &len) {
+  if (hex.length() == 0 || hex.length() % 2 != 0 || hex.length() / 2 > maxLen) return false;
+  len = hex.length() / 2;
+  for (size_t i = 0; i < len; i++) {
+    char hi = hex[i * 2], lo = hex[i * 2 + 1];
+    int h = (hi >= '0' && hi <= '9') ? hi - '0' : (hi >= 'a' && hi <= 'f') ? hi - 'a' + 10 : (hi >= 'A' && hi <= 'F') ? hi - 'A' + 10 : -1;
+    int l = (lo >= '0' && lo <= '9') ? lo - '0' : (lo >= 'a' && lo <= 'f') ? lo - 'a' + 10 : (lo >= 'A' && lo <= 'F') ? lo - 'A' + 10 : -1;
+    if (h < 0 || l < 0) return false;
+    out[i] = (uint8_t)(h * 16 + l);
+  }
+  return true;
+}
+
+// Decrypts the app's "OPEN:<hex>" payload (AES-256-GCM). Returns true only if the
+// authentication tag is valid, and then fills pinOut with the decrypted PIN.
+bool decryptPin(const String &hex, String &pinOut) {
+  uint8_t buf[40];
+  size_t n = 0;
+  if (!hexToBytes(hex, buf, sizeof(buf), n)) return false;
+  if (n < 17 || n > 32) return false;              // 1..16 character PIN + 16 byte tag
+  size_t clen = n - 16;
+
+  uint8_t key[32];                                 // key = SHA-256(APP_SECRET)
+  br_sha256_context sc;
+  br_sha256_init(&sc);
+  br_sha256_update(&sc, APP_SECRET, strlen(APP_SECRET));
+  br_sha256_out(&sc, key);
+
+  br_aes_ct_ctr_keys bc;
+  br_aes_ct_ctr_init(&bc, key, sizeof(key));
+  br_gcm_context gc;
+  br_gcm_init(&gc, &bc.vtable, br_ghash_ctmul32);
+  br_gcm_reset(&gc, nonceBytes, 12);               // iv = first 12 bytes of the challenge
+  br_gcm_aad_inject(&gc, nonceBytes, 16);          // aad = the whole challenge
+  br_gcm_flip(&gc);
+  br_gcm_run(&gc, 0, buf, clen);                   // decrypt in place
+  if (br_gcm_check_tag(&gc, buf + clen) == 0) return false;
+
+  pinOut = "";
+  for (size_t i = 0; i < clen; i++) pinOut += (char)buf[i];
+  return true;
 }
 
 bool safeEqual(const String &a, const String &b) {   // constant-time compare
@@ -216,10 +249,14 @@ bool safeEqual(const String &a, const String &b) {   // constant-time compare
   return diff == 0;
 }
 
-String makeNonce() {   // 128 random bits from the hardware RNG
-  char buf[33];
-  for (int i = 0; i < 4; i++) sprintf(buf + i * 8, "%08x", (unsigned int)RANDOM_REG32);
-  return String(buf);
+String makeNonce() {   // 128 random bits from the hardware RNG -> nonceBytes, returns hex
+  for (int i = 0; i < 4; i++) {
+    uint32_t r = RANDOM_REG32;
+    for (int j = 0; j < 4; j++) nonceBytes[i * 4 + j] = (r >> (8 * j)) & 0xFF;
+  }
+  char hex[33];
+  for (int i = 0; i < 16; i++) sprintf(hex + i * 2, "%02x", nonceBytes[i]);
+  return String(hex);
 }
 
 bool isLocked() {
@@ -257,23 +294,26 @@ void onMessage(char *topic, byte *payload, unsigned int length) {
       return;
     }
     lastHello = millis();
-    nonce = makeNonce();
+    String challenge = makeNonce();
+    nonceActive = true;
     nonceExpires = millis() + NONCE_MS;
-    if (mqtt.connected()) mqtt.publish(T_CHALLENGE, nonce.c_str());
+    if (mqtt.connected()) mqtt.publish(T_CHALLENGE, challenge.c_str());
     return;
   }
 
   if (msg.startsWith("OPEN:")) {
     String given = msg.substring(5);
-    given.toLowerCase();
-    if (nonce.length() == 0 || (long)(nonceExpires - millis()) <= 0) {
-      nonce = "";
+    given.trim();
+    if (!nonceActive || (long)(nonceExpires - millis()) <= 0) {
+      nonceActive = false;
       publishResult("EXPIRED");
       return;
     }
-    String expected = hmacHex(APP_SECRET, nonce + ":" + PIN_CODE);
-    nonce = "";                      // a challenge works only once
-    if (!safeEqual(given, expected)) {
+    String pin;
+    bool ok = decryptPin(given, pin);   // uses the current challenge
+    nonceActive = false;                // a challenge works only once
+    memset(nonceBytes, 0, sizeof(nonceBytes));
+    if (!ok || !safeEqual(pin, String(PIN_CODE))) {
       registerWrong();
       return;
     }

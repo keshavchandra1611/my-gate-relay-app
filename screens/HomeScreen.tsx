@@ -1,10 +1,11 @@
 /*
- * My Gate - React Native / Expo app v1.2.0 - gate screen (the starter's Home screen).
+ * My Gate - React Native / Expo app v1.3.0 - gate screen (the starter's Home screen).
  *
  * One tap opens the gate. Talks to the ESP8266 firmware over MQTT (WebSocket + TLS).
- * The PIN is never sent. Flow: app sends "HELLO", the device answers with a one-time
- * challenge, the app replies "OPEN:<HMAC-SHA256(APP_SECRET, challenge:PIN)>".
- *   Publishes to  <BASE>/cmd        : "HELLO" | "OPEN:<hmac hex>"
+ * The PIN is sent ENCRYPTED (AES-256-GCM), so the broker can never read it. Flow: app sends
+ * "HELLO", the device answers with a one-time challenge, the app replies "OPEN:<hex>" where
+ * hex = encrypted PIN (key = SHA-256(APP_SECRET), iv/aad from the challenge; see gateCrypto.ts).
+ *   Publishes to  <BASE>/cmd        : "HELLO" | "OPEN:<encrypted PIN hex>"
  *   Reads from    <BASE>/challenge  : one-time random challenge
  *   Reads from    <BASE>/gate       : "OPENING" | "OPEN"   (OPEN = relay off again, gate is open)
  *   Reads from    <BASE>/result     : "OK" | "WRONG_PIN" | "LOCKED" | "BUSY" | "COOLDOWN" | "EXPIRED"
@@ -36,7 +37,7 @@ import {
 import Constants from 'expo-constants';
 import mqtt from 'mqtt';
 import type { MqttClient } from 'mqtt';
-import { sha256 } from 'js-sha256';
+import { encryptPin } from '../gateCrypto';
 import { SettingsIcon } from '../components/Icons';
 import { PressableScale } from '../components/Motion';
 import { ThemeColors, ThemeScheme, useTheme } from '../theme';
@@ -157,9 +158,18 @@ export default function HomeScreen({ onOpenSettings }: { onOpenSettings: () => v
         // answer only a challenge we asked for; the PIN itself is never sent
         if (!waitingChallenge.current) return;
         waitingChallenge.current = false;
-        const answer = sha256.hmac(APP_SECRET, `${raw}:${pinRef.current}`);
-        client.publish(T_CMD, `OPEN:${answer}`, { qos: 1 });
-        addLog('answered challenge');
+        let encrypted: string;
+        try {
+          encrypted = encryptPin(APP_SECRET, raw, pinRef.current); // AES-256-GCM, see gateCrypto.ts
+        } catch {
+          addLog('bad challenge from the gate');
+          clearTimeout(timers.current.fallback);
+          setGate('idle');
+          setNotice({ text: 'Gate sent an invalid challenge', ok: false });
+          return;
+        }
+        client.publish(T_CMD, `OPEN:${encrypted}`, { qos: 1 });
+        addLog('sent encrypted PIN');
       } else if (topic === T_FAULT) {
         addLog(`fault ${text}`);
         setNotice({ text: `Gate fault: ${text.replace(/_/g, ' ').toLowerCase()}`, ok: false });
