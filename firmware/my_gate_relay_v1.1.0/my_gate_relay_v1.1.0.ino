@@ -1,37 +1,40 @@
 /*
- * My Gate Relay Firmware v1.0.0
- * ESP8266 1-channel relay controlled over MQTT (WiFi)
+ * My Gate Relay Firmware v1.1.0
+ * ESP8266 gate opener: one MQTT command pulses the relay for 1 second.
  *
  * What this code does:
- *   Connects to your WiFi and to an MQTT broker, then switches the relay
- *   based on commands from the React Native app (relay-app) and reports the
- *   relay state back. Also still accepts ON / OFF / TOGGLE / STATUS typed in
- *   Serial Monitor (115200 baud, Newline).
+ *   Connects to your WiFi and to an MQTT broker. When the app sends "OPEN" with
+ *   the correct PIN, the relay turns ON for OPEN_MS (1 second), then turns OFF,
+ *   and the firmware publishes "OPEN" ("relay is off, the gate is open").
  *
  * MQTT topics (BASE_TOPIC must match relay-app/env.json):
- *   <BASE>/cmd     (subscribe)  "<COMMAND>:<PIN>", e.g. "ON:1234", "OFF:1234",
- *                               "TOGGLE:1234", "STATUS:1234"
- *   <BASE>/status  (publish, retained)  "ON" | "OFF"
+ *   <BASE>/cmd     (subscribe)  "OPEN:<PIN>", e.g. "OPEN:1234"  (also "STATUS:<PIN>")
+ *   <BASE>/gate    (publish)    "OPENING" when the relay turns on,
+ *                               "OPEN"    when the relay is off again (gate is open)
+ *   <BASE>/result  (publish)    "OK" | "WRONG_PIN" | "LOCKED" | "BUSY" | "UNKNOWN"
+ *   <BASE>/status  (publish, retained)  relay state "ON" | "OFF"
  *   <BASE>/online  (publish, retained)  "1" when connected, "0" via last will
- *   <BASE>/result  (publish)            "OK" | "WRONG_PIN" | "LOCKED"
  *
  * PIN protection:
- *   MQTT commands only work with the correct 4-digit PIN (PIN_CODE in secrets.h).
+ *   MQTT commands only work with the correct 4-digit PIN (PIN_CODE below).
  *   After MAX_WRONG wrong PINs in a row, MQTT commands are locked for LOCK_MS.
- *   Serial Monitor commands need no PIN (physical access to the board).
+ *
+ * Serial Monitor (115200 baud, Newline) - no PIN needed, for testing on the bench:
+ *   OPEN, ON, OFF, STATUS
  *
  * Setup:
  *   - Relay module: VCC -> 5V, GND -> GND, IN -> D1 (GPIO5)
  *   - Arduino IDE: install library "PubSubClient" by Nick O'Leary
  *     (Sketch -> Include Library -> Manage Libraries)
- *   - Copy secrets.example.h to secrets.h and fill in WIFI_SSID / WIFI_PASS /
- *     MQTT_USER / MQTT_PASS / PIN_CODE (2.4 GHz WiFi only)
+ *   - Fill in WIFI_SSID / WIFI_PASS / MQTT_USER / MQTT_PASS / PIN_CODE in the
+ *     settings section below (2.4 GHz WiFi only)
  *
  * Notes:
  *   - Connection is TLS (port 8883) with username + password. The certificate
  *     is NOT verified (setInsecure) - traffic is encrypted but a man-in-the-middle
  *     is not detected. Fine for a home project; pin the broker certificate for more.
- *   - Relay starts OFF at power-up.
+ *   - Relay starts OFF at power-up and is always switched off again after OPEN_MS,
+ *     even if WiFi or MQTT drops during the pulse.
  *   - For an active-low module, OFF is done by releasing the pin (INPUT mode)
  *     so the module's pull-up turns it fully off.
  */
@@ -42,15 +45,20 @@
 
 // ---------- settings ----------
 #define FW_NAME          "My Gate Relay Firmware"
-#define FW_VERSION       "1.0.0"
+#define FW_VERSION       "1.1.0"
 
-#include "secrets.h"   // WIFI_SSID, WIFI_PASS, MQTT_USER, MQTT_PASS, PIN_CODE (copy secrets.example.h)
+#define WIFI_SSID        "YOUR_WIFI_NAME"
+#define WIFI_PASS        "YOUR_WIFI_PASSWORD"
+#define MQTT_USER        "YOUR_MQTT_USERNAME"
+#define MQTT_PASS        "YOUR_MQTT_PASSWORD"
+#define PIN_CODE         "1234"
 
 
 #define MQTT_HOST        "broker.mqtty.com"
 #define MQTT_PORT        8883                      // MQTT over TLS
 #define BASE_TOPIC       "my-gate-1"   // must match BASE_TOPIC in relay-app/env.json
 
+#define OPEN_MS          1000UL   // relay ON time for one gate open (ms)
 #define MAX_WRONG        5        // wrong PINs in a row before lockout
 #define LOCK_MS          30000UL  // lockout time in milliseconds
 
@@ -62,6 +70,7 @@
 #define T_STATUS BASE_TOPIC "/status"
 #define T_ONLINE BASE_TOPIC "/online"
 #define T_RESULT BASE_TOPIC "/result"
+#define T_GATE   BASE_TOPIC "/gate"
 
 BearSSL::WiFiClientSecure wifiClient;
 PubSubClient mqtt(wifiClient);
@@ -91,23 +100,69 @@ void publishStatus() {
   }
 }
 
-void handleCommand(String cmd, const char *source) {
+void publishGate(const char *state) {
+  if (mqtt.connected()) mqtt.publish(T_GATE, state);   // not retained
+}
+
+bool pulsing = false;
+unsigned long pulseStart = 0;
+
+// Turns the relay on for OPEN_MS. Returns false if a pulse is already running.
+bool openGate(const char *source) {
+  if (pulsing) {
+    Serial.printf("[%lu ms] (%s) OPEN ignored, already opening\n", millis(), source);
+    return false;
+  }
+  relayWrite(true);
+  pulsing = true;
+  pulseStart = millis();
+  Serial.printf("[%lu ms] (%s) OPEN -> relay ON for %lu ms\n", millis(), source, OPEN_MS);
+  publishStatus();
+  publishGate("OPENING");
+  return true;
+}
+
+void finishPulse() {
+  relayWrite(false);
+  pulsing = false;
+  Serial.printf("[%lu ms] relay OFF - the gate is open\n", millis());
+  publishStatus();
+  publishGate("OPEN");
+}
+
+void servicePulse() {
+  if (pulsing && millis() - pulseStart >= OPEN_MS) finishPulse();
+}
+
+// Returns "OK", "BUSY" or "UNKNOWN". ON/OFF are only allowed from Serial (bench testing).
+const char *handleCommand(String cmd, const char *source, bool fromSerial) {
   cmd.trim();
   cmd.toUpperCase();
-  if (cmd.length() == 0) return;
+  if (cmd.length() == 0) return "UNKNOWN";
 
-  if (cmd == "ON") {
-    relayWrite(true);
-  } else if (cmd == "OFF") {
-    relayWrite(false);
-  } else if (cmd == "TOGGLE") {
-    relayWrite(!relayOn);
-  } else if (cmd != "STATUS") {
-    Serial.printf("[%lu ms] (%s) unknown command '%s'\n", millis(), source, cmd.c_str());
-    return;
+  if (cmd == "OPEN") return openGate(source) ? "OK" : "BUSY";
+
+  if (cmd == "STATUS") {
+    Serial.printf("[%lu ms] (%s) relay is %s\n", millis(), source, relayOn ? "ON" : "OFF");
+    publishStatus();
+    return "OK";
   }
-  Serial.printf("[%lu ms] (%s) %s -> relay %s\n", millis(), source, cmd.c_str(), relayOn ? "ON" : "OFF");
-  publishStatus();
+  if (fromSerial && cmd == "ON") {
+    pulsing = false;
+    relayWrite(true);
+    Serial.printf("[%lu ms] (serial) relay ON (stays on until OFF)\n", millis());
+    publishStatus();
+    return "OK";
+  }
+  if (fromSerial && cmd == "OFF") {
+    pulsing = false;
+    relayWrite(false);
+    Serial.printf("[%lu ms] (serial) relay OFF\n", millis());
+    publishStatus();
+    return "OK";
+  }
+  Serial.printf("[%lu ms] (%s) unknown command '%s'\n", millis(), source, cmd.c_str());
+  return "UNKNOWN";
 }
 
 int wrongCount = 0;
@@ -148,8 +203,7 @@ void onMessage(char *topic, byte *payload, unsigned int length) {
   }
 
   wrongCount = 0;
-  handleCommand(cmd, "mqtt");
-  publishResult("OK");
+  publishResult(handleCommand(cmd, "mqtt", false));
 }
 
 void connectWifi() {
@@ -157,7 +211,10 @@ void connectWifi() {
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
+    for (int i = 0; i < 50; i++) {   // 500 ms, but keep servicing the relay pulse
+      servicePulse();
+      delay(10);
+    }
     Serial.print(".");
   }
   Serial.printf("\n[%lu ms] WiFi: connected, IP %s\n", millis(), WiFi.localIP().toString().c_str());
@@ -197,11 +254,17 @@ void setup() {
 }
 
 void loop() {
+  servicePulse();
+
   if (WiFi.status() != WL_CONNECTED) {
     connectWifi();
   }
 
   if (!mqtt.connected()) {
+    while (pulsing) {   // never block a reconnect while the relay is on
+      servicePulse();
+      delay(10);
+    }
     if (millis() - lastReconnect > 5000 || lastReconnect == 0) {
       lastReconnect = millis();
       connectMqtt();
@@ -213,7 +276,7 @@ void loop() {
   while (Serial.available()) {
     char c = Serial.read();
     if (c == '\n' || c == '\r') {
-      handleCommand(line, "serial");
+      handleCommand(line, "serial", true);
       line = "";
     } else {
       line += c;

@@ -43,6 +43,3 @@ env.json
 
 # builds
 *.apk
-
-# firmware secrets
-firmware/**/secrets.h
