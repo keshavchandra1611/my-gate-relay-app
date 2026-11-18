@@ -1,8 +1,8 @@
 // AppVersions/version.js
-const APP_ID = "com.keshav1611.rnstarter";
-const APP_NAME = "RN Multi Env Starter";
+const APP_ID = "com.keshav1611.relayapp";
+const APP_NAME = "My Gate";
 
-const SLUG = "rn-multi-env-starter";
+const SLUG = "relay-app";
 
 const VERSION = "1.0.0";
 const RUNTIMEVERSION = VERSION;
@@ -11,8 +11,8 @@ const VERSION_CODE = 1;
 
 // Your Expo account and EAS project. Fill these in before building or
 // publishing updates (run `npx eas init` to get a project id).
-const OWNER = "";
-const PROJECTID = "";
+const OWNER = "keshav1611";
+const PROJECTID = "9cfe9dba-3f7f-4e54-b0ab-b5b20afc0bf9";
 
 
 // OTA release history. Add a NEW entry at the END every time you publish an

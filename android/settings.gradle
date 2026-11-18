@@ -31,7 +31,7 @@ extensions.configure(com.facebook.react.ReactSettingsExtension) { ex ->
 }
 expoAutolinking.useExpoModules()
 
-rootProject.name = 'RN Multi Env Starter'
+rootProject.name = 'My Gate'
 
 expoAutolinking.useExpoVersionCatalog()
 

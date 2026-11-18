@@ -58,7 +58,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     version: VERSION,
 
     // UI / behavior
-    orientation: "default",
+    orientation: "portrait",
     // "automatic" lets the in-app System / Light / Dark switch follow the device.
     userInterfaceStyle: "automatic",
     newArchEnabled: true,

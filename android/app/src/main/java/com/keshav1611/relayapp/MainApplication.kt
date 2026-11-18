@@ -1,4 +1,4 @@
-package com.keshav1611.rnstarter
+package com.keshav1611.relayapp
 
 import android.app.Application
 import android.content.res.Configuration
