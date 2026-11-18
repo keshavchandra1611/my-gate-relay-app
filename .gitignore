@@ -43,3 +43,4 @@ env.json
 
 # builds
 *.apk
+*.aab

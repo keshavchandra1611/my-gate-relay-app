@@ -21,10 +21,11 @@ const PROJECTID = "9cfe9dba-3f7f-4e54-b0ab-b5b20afc0bf9";
 // `heading` is the title shown above the description (RELEASE_HEADER).
 const HISTORY = [
   {
-    version: "1.0.1.0",
-    heading: "Init",
-    description: "• Initial release",
-  }
+    version: "1.3.0.0",
+    heading: "What's New",
+    description:
+      "• One-tap gate opening with an encrypted PIN.\n• OTA updates: the app can now update itself without reinstalling.",
+  },
 ];
 
 // Latest = last item in the history array.

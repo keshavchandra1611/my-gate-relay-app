@@ -1,0 +1,36 @@
+# Used by `eas build --local` INSTEAD of .gitignore when packing the project.
+# Same as .gitignore, except env.json is NOT ignored (the app imports it at build time).
+
+node_modules/
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+.kotlin/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+.metro-health-check*
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+.DS_Store
+*.pem
+.env*.local
+*.tsbuildinfo
+/ios
+
+# build outputs and caches
+/android/build/
+/android/.gradle/
+/android/.cxx/
+/android/app/build/
+/android/app/.cxx/
+
+# firmware sketches hold WiFi/MQTT passwords and are not part of the app
+/firmware/
+*.apk
+*.aab

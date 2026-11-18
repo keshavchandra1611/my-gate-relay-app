@@ -109,8 +109,8 @@ function Root() {
         </Animated.View>
       ) : null}
 
-      {/* Checks for an OTA update on launch; shows a dialog only when needed. */}
-      <AppUpdates ref={updates} />
+      {/* Checks for an OTA update once the splash is gone; shows a dialog only when needed. */}
+      {showSplash ? null : <AppUpdates ref={updates} />}
 
       <ThemeFade />
 

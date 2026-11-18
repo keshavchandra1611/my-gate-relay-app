@@ -280,7 +280,7 @@ export default function HomeScreen({ onOpenSettings }: { onOpenSettings: () => v
         <Animated.View style={[styles.header, enter(0)]}>
           <View>
             <Text style={styles.title}>{Constants.expoConfig?.name}</Text>
-            <Text style={styles.subtitle}>{BASE_TOPIC}</Text>
+            <Text style={styles.subtitle}>{`${BASE_TOPIC} · v${Constants.expoConfig?.extra?.otaVersion}`}</Text>
           </View>
           <PressableScale
             onPress={onOpenSettings}
