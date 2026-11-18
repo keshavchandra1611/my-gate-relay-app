@@ -26,6 +26,12 @@ const HISTORY = [
     description:
       "• One-tap gate opening with an encrypted PIN.\n• OTA updates: the app can now update itself without reinstalling.",
   },
+  {
+    version: "1.3.0.1",
+    heading: "What's New",
+    description:
+      "• Theme: choose System, Light or Dark in Settings (top-right button).\n• Auto Theme: the app now follows your phone's light/dark setting.",
+  },
 ];
 
 // Latest = last item in the history array.
