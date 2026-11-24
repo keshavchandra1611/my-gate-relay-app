@@ -1,78 +1,103 @@
-# RN Multi Env Starter
+# My Gate
 
-An Expo (React Native + TypeScript) starter with three environments — **Dev**, **QA** and **Production** — built from one codebase. Each environment gets its own app name, Android package and update channel, so all three can be installed side by side.
+**Works with an ESP8266 board and a 1-channel relay module.**
 
-It also ships with over-the-air (OTA) updates through EAS Update, a single file that controls every version number, and a small themed UI (light / dark / system) with no navigation or UI library.
+Open a gate with one tap from your phone. An Android app (Expo / React Native) talks over MQTT to the ESP8266, which pulses the relay wired to the gate opener.
+
+The PIN never travels in plain text: the app encrypts it with AES-256-GCM using a one-time challenge from the device, so the MQTT broker only ever sees ciphertext.
 
 Made by **Keshav Chandra** — Software | Hardware | Tech
 
----
+Based on [RN Multi Env Starter](https://github.com/keshavchandra1611/reactnative-multi-env-starter), which provides the Dev / QA / Production environments, versioning, OTA updates and theming.
 
-## What's included
-
-- **Three environments** selected with one variable, `APP_ENV` (`dev`, `qa`, `prod`)
-- **Dynamic `app.config.ts`** — name, package ID and update channel change per environment
-- **One source of truth for versions** — `AppVersions/version.js`
-- **OTA updates** with an in-app prompt: *Update now* or *Later*, plus optional mandatory updates
-- **Local EAS builds** for each environment (APK and Play Store bundle)
-- **Smaller release builds** — Hermes, Proguard and resource shrinking
-- **Themed UI** — Home and Settings screens, light / dark / system mode, animations built with React Native's `Animated` API only
-
-| Environment | `APP_ENV` | App name                 | Android package                | Update channel |
-| ----------- | --------- | ------------------------ | ------------------------------ | -------------- |
-| Dev         | `dev`     | RN Multi Env Starter Dev | `com.keshav1611.rnstarter.dev` | `development`  |
-| QA          | `qa`      | RN Multi Env Starter QA  | `com.keshav1611.rnstarter.qa`  | `preview`      |
-| Production  | `prod`    | RN Multi Env Starter     | `com.keshav1611.rnstarter`     | `production`   |
-
-If `APP_ENV` is not set, the config falls back to **`prod`**.
+Starter repo: https://github.com/keshavchandra1611/reactnative-multi-env-starter
 
 ---
 
-## Requirements
+## How it works
 
-- Node.js 20.19 or newer
-- Android Studio with an SDK and a device or emulator
-- An Expo account and the EAS CLI
-
-```bash
-npm install -g eas-cli
-npx expo login
+```
+Phone app  ──(MQTT over WebSocket + TLS)──▶  Broker  ◀──(MQTT over TLS)──  ESP8266 + relay
 ```
 
-The `npm` scripts use `APP_ENV=... command` syntax, which works on macOS and Linux. On Windows use WSL or add `cross-env`.
+1. You enter the 4-digit PIN and tap **Open Gate**.
+2. The app sends `HELLO`; the device answers with a one-time random challenge.
+3. The app encrypts the PIN with that challenge and sends `OPEN:<hex>`.
+4. The device decrypts it. If the PIN is right, the relay turns on for 1 second, then off.
+5. The device reports `OPENING`, then `OPEN`; the app shows the state and unlocks the button again.
+
+The app only sends commands while the device is online (green **Device** pill).
+
+### MQTT topics
+
+`<BASE>` is `BASE_TOPIC`, which must be the same in `env.json` and in the firmware.
+
+| Topic              | Direction     | Payload                                                                      |
+| ------------------ | ------------- | ---------------------------------------------------------------------------- |
+| `<BASE>/cmd`       | app → device  | `HELLO` or `OPEN:<encrypted PIN hex>`                                         |
+| `<BASE>/challenge` | device → app  | One-time random challenge (short-lived, used once)                           |
+| `<BASE>/gate`      | device → app  | `OPENING` (relay on), `OPEN` (relay off again, gate is open)                 |
+| `<BASE>/result`    | device → app  | `OK`, `WRONG_PIN`, `LOCKED`, `BUSY`, `COOLDOWN`, `EXPIRED`, `UNKNOWN`        |
+| `<BASE>/fault`     | device → app  | Safety events, e.g. relay forced off or a crash reset                        |
+| `<BASE>/status`    | device, retained | Relay state `ON` / `OFF`                                                  |
+| `<BASE>/online`    | device, retained | `1` when connected, `0` through the last will                             |
+
+### Security and safety
+
+- **Encrypted PIN:** key = SHA-256(`APP_SECRET`), IV and AAD come from the challenge. A recorded message cannot be replayed.
+- **Lockout:** wrong PINs lock commands for 30 seconds, doubling up to 15 minutes.
+- **Relay fail-safes:** the relay is off at boot, a hardware timer switches it off after the pulse even if the main loop is blocked, and any unexpected "on" state is forced off and reported on `<BASE>/fault`.
+- **Rate limits:** a cooldown between opens and a per-minute limit protect the relay and the gate motor.
+- **Limit to know about:** `APP_SECRET` is inside the app, so keep the APK private and choose a PIN that is not guessable. TLS to the broker is encrypted, but the firmware does not verify the server certificate.
 
 ---
 
-## Getting started
+## What you need
+
+- ESP8266 board (NodeMCU or Wemos D1 mini) and a 1-channel relay module
+- An MQTT broker that supports TLS (port 8883) and WebSocket over TLS for the app
+- Node.js 20.19 or newer, Android Studio with an SDK, and a device or emulator
+- An Expo account and the EAS CLI (`npm install -g eas-cli`)
+- Arduino IDE with the ESP8266 board package and the **PubSubClient** library
+
+---
+
+## Firmware setup
+
+The sketch is in `firmware/my_gate_relay_v1.3.0/`.
+
+1. Wire the relay module: `VCC → 5V`, `GND → GND`, `IN → D1 (GPIO5)`.
+2. Open the sketch in the Arduino IDE and fill in the settings at the top: WiFi name and password (2.4 GHz only), MQTT host, user and password, `BASE_TOPIC`, `PIN_CODE` and `APP_SECRET`.
+3. Set `RELAY_ACTIVE_LOW` to `false` if your relay board is active-high.
+4. Upload it to the board.
+
+Use your own values for the WiFi password, MQTT password, PIN and `APP_SECRET`, and do not publish a sketch that contains them.
+
+---
+
+## App setup
 
 ### 1. Install
 
 ```bash
-git clone https://github.com/keshavchandra1611/reactnative-multi-env-starter.git
-cd reactnative-multi-env-starter
 npm install
 ```
 
-### 2. Make it yours
+### 2. Add your MQTT settings
 
-Open `AppVersions/version.js` and set your own values:
+Copy `env.example.json` to `env.json` and fill it in. `env.json` is git-ignored.
 
-```js
-const APP_ID = "com.yourname.yourapp";   // base Android package
-const APP_NAME = "Your App";
-const SLUG = "your-app";
-
-const OWNER = "your-expo-username";
-const PROJECTID = "your-eas-project-id";
+```json
+{
+  "MQTT_URL": "wss://your-broker:8884/mqtt",
+  "MQTT_USERNAME": "your_username",
+  "MQTT_PASSWORD": "your_password",
+  "BASE_TOPIC": "my-gate-1",
+  "APP_SECRET": "same_secret_as_in_the_firmware"
+}
 ```
 
-`OWNER` and `PROJECTID` are empty in this repo. To get a project ID, run:
-
-```bash
-npx eas init
-```
-
-Builds and OTA publishing will not work until both are filled in.
+`BASE_TOPIC` and `APP_SECRET` must match the firmware exactly.
 
 ### 3. Run on a device
 
@@ -80,125 +105,41 @@ Builds and OTA publishing will not work until both are filled in.
 npm run android
 ```
 
-This builds and installs the **Dev** app. It cleans the Gradle output, regenerates the `android` folder for the dev package, then runs the app.
+This builds and installs the **Dev** app (`My Gate Dev`).
 
-### 4. Check the config for any environment
+---
+
+## Environments
+
+| Environment | `APP_ENV` | App name    | Android package               | Update channel |
+| ----------- | --------- | ----------- | ----------------------------- | -------------- |
+| Dev         | `dev`     | My Gate Dev | `com.keshav1611.relayapp.dev` | `development`  |
+| QA          | `qa`      | My Gate QA  | `com.keshav1611.relayapp.qa`  | `preview`      |
+| Production  | `prod`    | My Gate     | `com.keshav1611.relayapp`     | `production`   |
+
+All three can be installed side by side. Every environment reads the same `env.json`.
+
+---
+
+## Versions, builds and updates
+
+Everything lives in `AppVersions/version.js`: app name, package ID, `VERSION`, `VERSION_CODE`, the EAS project and the release `HISTORY`.
+
+### Build an APK
 
 ```bash
-APP_ENV=dev  npx expo config --type public
-APP_ENV=qa   npx expo config --type public
-APP_ENV=prod npx expo config --type public
+npm run build:dev                    # development client
+npm run build:preview                # QA APK
+npm run build:production             # production APK
+npm run build:playstore_production   # app bundle (AAB)
 ```
 
-Look at `name`, `android.package` and `updates.requestHeaders` to confirm the environment was picked up.
+Builds run locally with EAS. `.easignore` makes sure `env.json` is included in the build even though git ignores it.
 
----
-
-## Project structure
-
-```
-reactnative-multi-env-starter/
-│
-├── App.tsx                      App shell: theme provider, Home ⇄ Settings transition
-├── app.config.ts                Dynamic Expo config driven by APP_ENV
-├── eas.json                     EAS build profiles and update channels
-├── index.ts                     Entry point
-│
-├── AppVersions/
-│   ├── version.js               App ID, name, versions, release history (edit this)
-│   ├── UpdateVersion.ts         Copies version + slug into package.json
-│   ├── UpdateVersionCode.ts     Copies versionCode into android/app/build.gradle
-│   └── PublishOta.ts            Publishes an OTA update to the right channel
-│
-├── screens/
-│   ├── HomeScreen.tsx           Installed version, environment track, build details
-│   └── SettingsScreen.tsx       Theme picker, "Check for updates"
-│
-├── components/
-│   ├── AppUpdates.tsx           OTA check on launch + update bottom sheet
-│   ├── ThemePicker.tsx          System / Light / Dark tiles
-│   ├── ReleaseTrack.tsx         Development → QA → Production track
-│   ├── Signature.tsx            Author mark shown on every screen
-│   ├── Motion.tsx               Fade-in and press animations
-│   └── Icons.tsx                Icons drawn with plain Views
-│
-├── theme/
-│   └── index.tsx                Colours, theme provider, saved theme choice
-│
-├── assets/
-│   └── appImage/                App icon, adaptive icon, splash icon, favicon
-│
-└── android/                     Generated native project (expo prebuild)
-```
-
----
-
-## Versioning
-
-Everything lives in `AppVersions/version.js`:
-
-| Value            | Meaning                                                              |
-| ---------------- | -------------------------------------------------------------------- |
-| `VERSION`        | App version shown to users (`versionName`)                           |
-| `VERSION_CODE`   | Android `versionCode`; must increase for every Play Store upload     |
-| `RUNTIMEVERSION` | Which native build an OTA update is compatible with                  |
-| `HISTORY`        | List of releases; the **last** entry is the current OTA version      |
-
-A history entry looks like this:
-
-```js
-{
-  version: "1.0.1.1",          // OTA version label
-  heading: "What's new",       // title shown above the notes
-  description: "• First line\n• Second line",
-  mandatory: false,            // optional: true forces the update
-}
-```
-
-Change `RUNTIMEVERSION` only when you ship a new native build. An OTA update is delivered only to installed builds with the same runtime version.
-
-### When an OTA update is not enough
-
-An OTA update replaces only the JavaScript bundle and the assets it imports. It **cannot** change anything native. If a change touches any of the following, the OTA update will not carry it — you have to make a new build and share the APK (or upload a new bundle to the Play Store):
-
-- anything inside the `android/` folder
-- the app icon, adaptive icon or splash screen
-- the app name, package ID or permissions
-- native settings in `app.config.ts` (for example `userInterfaceStyle`, `orientation`, `plugins`, `updates`)
-- adding, removing or upgrading a library that contains native code
-- upgrading the Expo SDK or React Native
-
-For a native change:
-
-1. Raise `VERSION` and `VERSION_CODE`. In this project `RUNTIMEVERSION` is set equal to `VERSION`, so the runtime version rises with it. That stops old installed builds from receiving JavaScript written for the new native code.
-2. Build with one of the `build:*` commands and distribute the new APK.
-3. Users on the old build keep working, but they get no further OTA updates until they install the new APK.
-
-Changes that are safe to send over the air: screens, components, styles, colours, text, business logic, and images imported from JavaScript.
-
----
-
-## Building
-
-All builds run locally with EAS (`--local`) and produce a file in the project folder.
-
-| Command                              | Environment | Output                                   |
-| ------------------------------------ | ----------- | ---------------------------------------- |
-| `npm run build:dev`                  | Dev         | Development client (APK)                 |
-| `npm run build:preview`              | QA          | Internal APK                             |
-| `npm run build:production`           | Production  | APK                                      |
-| `npm run build:playstore_production` | Production  | App bundle (AAB) for the Play Store      |
-
-Each command regenerates the `android` folder for its environment, cleans the previous build output and syncs `versionCode` before building.
-
----
-
-## OTA updates
-
-### Publishing
+### Publish an OTA update
 
 1. Add a new entry at the **end** of `HISTORY` in `AppVersions/version.js`.
-2. Publish to the environment you want:
+2. Publish:
 
 ```bash
 npm run update:dev     # channel: development
@@ -206,71 +147,57 @@ npm run update:qa      # channel: preview
 npm run update:prod    # channel: production
 ```
 
-The update message defaults to the latest history entry. To override it:
+The app checks for an update after the splash screen and shows the release notes with **Update now** / **Later**. **Settings → Check for updates** runs the same check on demand.
 
-```bash
-npm run update:prod --message="Hotfix for login"
+An OTA update only reaches installed builds with the same `VERSION` (the runtime version). Raise `VERSION` and `VERSION_CODE` and ship a new APK whenever something native changes: the `android/` folder, icons or splash, native config in `app.config.ts`, or a library with native code.
+
+---
+
+## Project structure
+
 ```
-
-These commands do a full clean reinstall (`installFresh:hard`) before publishing, so they take a while.
-
-### What the user sees
-
-- The app checks for an update quietly on launch. Nothing is downloaded in the background.
-- If one is available, a bottom sheet shows the new version and its release notes.
-- **Update now** downloads the update and then offers to restart.
-- **Later** closes the sheet; it comes back on the next app launch.
-- A release marked `mandatory: true` has no *Later* and covers the app until it is installed.
-- **Settings → Check for updates** runs the same check on demand.
-
-OTA updates do not run in development builds started with `npm run android`; test them with a preview or production build.
-
----
-
-## Theming
-
-- **Settings → Appearance** switches between System, Light and Dark.
-- The choice is saved on the device and applied from the first frame on the next launch.
-- All colours are defined in `theme/index.tsx`; change the two palettes there to restyle the whole app.
-
----
-
-## Useful scripts
-
-| Command                          | What it does                                                             |
-| -------------------------------- | ------------------------------------------------------------------------ |
-| `npm run android`                | Build and run the Dev app on a connected device                          |
-| `npm run reset:cache`            | Clear Watchman, Metro and Expo caches                                    |
-| `npm run ifProb`                 | Clear Metro caches, then run `android` (use when the bundler misbehaves) |
-| `npm run CleanThenBuild`         | Stop Gradle, clean build output, sync `versionCode`                      |
-| `npm run callInstallHard:forDev` | Full reinstall for Dev: wipes `node_modules` and Gradle caches           |
-
-`installFresh:hard` also deletes `~/.gradle/caches`, which affects every Android project on the machine — the next build of any project will re-download its dependencies.
+├── App.tsx                      App shell: theme, Home ⇄ Settings, splash, update dialog
+├── app.config.ts                Expo config driven by APP_ENV
+├── env.example.json             Template for env.json (MQTT settings)
+├── gateCrypto.ts                AES-256-GCM encryption of the PIN
+│
+├── AppVersions/
+│   └── version.js               App identity, versions and release history (edit this)
+│
+├── screens/
+│   ├── HomeScreen.tsx           Gate screen: status pills, Open Gate button, PIN, activity log
+│   └── SettingsScreen.tsx       Theme picker, "Check for updates"
+│
+├── components/
+│   ├── Splash.tsx               Animated splash
+│   └── AppUpdates.tsx           OTA check and update dialog
+│
+├── theme/                       Colours and the saved System / Light / Dark choice
+├── firmware/                    ESP8266 sketch
+└── android/                     Generated native project (expo prebuild)
+```
 
 ---
 
 ## Troubleshooting
 
-**`cannot find symbol ... BuildConfig` after switching environment**
-The autolinking cache still points at the previous package name. `CleanThenBuild` clears it; run `npm run android` again, or delete `android/build/generated/autolinking` by hand.
+**Broker pill stays "Disconnected"**
+Check `MQTT_URL` (it must be the broker's WebSocket-over-TLS address), username and password in `env.json`. The activity log at the bottom of the screen shows the connection error.
 
-**"Update failed … Certificate not valid until …"**
-The device's date and time are wrong. Turn on automatic date & time in the device settings and try again.
+**Device pill stays "Offline"**
+The ESP8266 is not connected to the broker. Check its WiFi (2.4 GHz), MQTT settings and that `BASE_TOPIC` matches `env.json`.
 
-**The System theme never switches to dark**
-`userInterfaceStyle: "automatic"` is native config, so it needs a build made after that setting was added.
+**"Wrong PIN" with the correct PIN**
+`APP_SECRET` in `env.json` and in the firmware are different, so the device cannot decrypt the PIN.
+
+**"No response from the gate"**
+The device did not answer within 6 seconds. Check that it is online and not in a lockout.
 
 **An OTA update never arrives**
-Check that the installed build's channel and runtime version match the update you published, and that `OWNER` and `PROJECTID` are set.
+The installed build's channel and runtime version must match the update you published.
 
 ---
 
-## How this project was created
+## License
 
-```bash
-npx create-expo-app myApp --template blank-typescript
-npx eas init
-npx expo prebuild --platform android
-```
-
-`app.json` was then replaced with the dynamic `app.config.ts`, and the `eas.json` profiles, versioning scripts, OTA flow and UI were added on top.
+MIT — see `LICENSE`.
