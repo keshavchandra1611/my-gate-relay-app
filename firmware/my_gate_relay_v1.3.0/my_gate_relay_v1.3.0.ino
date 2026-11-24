@@ -8,7 +8,7 @@
  *   relay turns ON for OPEN_MS (1 second), then OFF. The firmware then publishes "OPEN"
  *   ("relay is off again, the gate is open"). The broker only ever sees ciphertext.
  *
- * MQTT topics (BASE_TOPIC must match relay-app/env.json):
+ * MQTT topics (BASE_TOPIC must be the same in env.h and the app's env.json):
  *   <BASE>/cmd        (subscribe)  "HELLO"            ask for a challenge
  *                                  "OPEN:<hex>"       encrypted PIN: hex(ciphertext + 16-byte tag)
  *   <BASE>/challenge  (publish)    one-time random challenge (valid NONCE_MS, used once)
@@ -41,8 +41,8 @@
  * Setup:
  *   - Relay module: VCC -> 5V, GND -> GND, IN -> D1 (GPIO5)
  *   - Arduino IDE: install library "PubSubClient" by Nick O'Leary
- *   - Fill in the settings below (2.4 GHz WiFi only). APP_SECRET must equal APP_SECRET in
- *     relay-app/env.json.
+ *   - Fill in env.h next to this sketch (2.4 GHz WiFi only). APP_SECRET and BASE_TOPIC must
+ *     equal the ones in the app's env.json.
  *
  * Notes:
  *   - TLS (port 8883) is encrypted but the server certificate is NOT verified (setInsecure).
@@ -60,16 +60,9 @@
 #define FW_NAME          "My Gate Relay Firmware"
 #define FW_VERSION       "1.3.0"
 
-#define WIFI_SSID        "YOUR_WIFI_NAME"
-#define WIFI_PASS        "YOUR_WIFI_PASSWORD"
-#define MQTT_USER        "YOUR_MQTT_USERNAME"
-#define MQTT_PASS        "YOUR_MQTT_PASSWORD"
-#define PIN_CODE         "1234"          // 4-digit PIN the user types in the app
-#define APP_SECRET       "generate_a_random_32_char_secret"   // shared with relay-app/env.json
-
-#define MQTT_HOST        "broker.mqtty.com"
-#define MQTT_PORT        8883                      // MQTT over TLS
-#define BASE_TOPIC       "my-gate-1"               // must match BASE_TOPIC in relay-app/env.json
+// WIFI_SSID, WIFI_PASS, MQTT_HOST, MQTT_PORT, MQTT_USER, MQTT_PASS, BASE_TOPIC, PIN_CODE and
+// APP_SECRET live in env.h next to this sketch. Fill in your own values there.
+#include "env.h"
 
 #define OPEN_MS            1000UL    // relay ON time for one gate open (ms)
 #define COOLDOWN_MS        3000UL    // minimum time between two opens

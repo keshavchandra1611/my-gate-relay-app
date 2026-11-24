@@ -30,7 +30,7 @@ The app only sends commands while the device is online (green **Device** pill).
 
 ### MQTT topics
 
-`<BASE>` is `BASE_TOPIC`, which must be the same in `env.json` and in the firmware.
+`<BASE>` is `BASE_TOPIC`, which must be the same in `env.json` and in the firmware's `env.h`.
 
 | Topic              | Direction     | Payload                                                                      |
 | ------------------ | ------------- | ---------------------------------------------------------------------------- |
@@ -64,14 +64,27 @@ The app only sends commands while the device is online (green **Device** pill).
 
 ## Firmware setup
 
-The sketch is in `firmware/my_gate_relay_v1.3.0/`.
+The sketch is in `firmware/my_gate_relay_v1.3.0/`. Its WiFi, MQTT, PIN and secret settings are in `env.h` next to it.
 
 1. Wire the relay module: `VCC → 5V`, `GND → GND`, `IN → D1 (GPIO5)`.
-2. Open the sketch in the Arduino IDE and fill in the settings at the top: WiFi name and password (2.4 GHz only), MQTT host, user and password, `BASE_TOPIC`, `PIN_CODE` and `APP_SECRET`.
-3. Set `RELAY_ACTIVE_LOW` to `false` if your relay board is active-high.
+2. Open `firmware/my_gate_relay_v1.3.0/env.h` and fill in your values (2.4 GHz WiFi only):
+
+```c
+#define WIFI_SSID   "your_wifi_name"
+#define WIFI_PASS   "your_wifi_password"
+#define MQTT_HOST   "broker.mqtty.com"
+#define MQTT_PORT   8883
+#define MQTT_USER   "your_mqtty_username"
+#define MQTT_PASS   "your_mqtty_password"
+#define BASE_TOPIC  "my-gate-1"
+#define PIN_CODE    "1234"
+#define APP_SECRET  "generate_a_random_32_char_secret_same_as_app"
+```
+
+3. Open the sketch in the Arduino IDE. Set `RELAY_ACTIVE_LOW` to `false` if your relay board is active-high.
 4. Upload it to the board.
 
-Use your own values for the WiFi password, MQTT password, PIN and `APP_SECRET`, and do not publish a sketch that contains them.
+Do not commit `env.h` with your real values.
 
 ---
 
@@ -97,7 +110,7 @@ Copy `env.example.json` to `env.json` and fill it in. `env.json` is git-ignored.
 }
 ```
 
-`BASE_TOPIC` and `APP_SECRET` must match the firmware exactly.
+`BASE_TOPIC` and `APP_SECRET` must match the firmware's `env.h` exactly.
 
 ### 3. Run on a device
 
@@ -159,7 +172,8 @@ An OTA update only reaches installed builds with the same `VERSION` (the runtime
 ├── App.tsx                      App shell: theme, Home ⇄ Settings, splash, update dialog
 ├── app.config.ts                Expo config driven by APP_ENV
 ├── env.example.json             Template for env.json (MQTT settings)
-├── gateCrypto.ts                AES-256-GCM encryption of the PIN
+├── utils/
+│   └── gateCrypto.ts            AES-256-GCM encryption of the PIN
 │
 ├── AppVersions/
 │   └── version.js               App identity, versions and release history (edit this)
@@ -173,7 +187,8 @@ An OTA update only reaches installed builds with the same `VERSION` (the runtime
 │   └── AppUpdates.tsx           OTA check and update dialog
 │
 ├── theme/                       Colours and the saved System / Light / Dark choice
-├── firmware/                    ESP8266 sketch
+├── firmware/
+│   └── my_gate_relay_v1.3.0/    ESP8266 sketch and its settings (env.h)
 └── android/                     Generated native project (expo prebuild)
 ```
 

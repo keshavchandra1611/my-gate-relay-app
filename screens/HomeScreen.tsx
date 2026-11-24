@@ -4,7 +4,7 @@
  * One tap opens the gate. Talks to the ESP8266 firmware over MQTT (WebSocket + TLS).
  * The PIN is sent ENCRYPTED (AES-256-GCM), so the broker can never read it. Flow: app sends
  * "HELLO", the device answers with a one-time challenge, the app replies "OPEN:<hex>" where
- * hex = encrypted PIN (key = SHA-256(APP_SECRET), iv/aad from the challenge; see gateCrypto.ts).
+ * hex = encrypted PIN (key = SHA-256(APP_SECRET), iv/aad from the challenge; see utils/gateCrypto.ts).
  *   Publishes to  <BASE>/cmd        : "HELLO" | "OPEN:<encrypted PIN hex>"
  *   Reads from    <BASE>/challenge  : one-time random challenge
  *   Reads from    <BASE>/gate       : "OPENING" | "OPEN"   (OPEN = relay off again, gate is open)
@@ -40,7 +40,7 @@ import {
 import Constants from 'expo-constants';
 import mqtt from 'mqtt';
 import type { MqttClient } from 'mqtt';
-import { encryptPin } from '../gateCrypto';
+import { encryptPin } from '../utils/gateCrypto';
 import { SettingsIcon } from '../components/Icons';
 import { PressableScale } from '../components/Motion';
 import { ThemeColors, ThemeScheme, useTheme } from '../theme';
@@ -170,7 +170,7 @@ export default function HomeScreen({ onOpenSettings }: { onOpenSettings: () => v
         waitingChallenge.current = false;
         let encrypted: string;
         try {
-          encrypted = encryptPin(APP_SECRET, raw, pinRef.current); // AES-256-GCM, see gateCrypto.ts
+          encrypted = encryptPin(APP_SECRET, raw, pinRef.current); // AES-256-GCM, see utils/gateCrypto.ts
         } catch {
           addLog('bad challenge from the gate');
           clearTimeout(timers.current.fallback);
