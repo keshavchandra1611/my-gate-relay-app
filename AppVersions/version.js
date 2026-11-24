@@ -4,9 +4,9 @@ const APP_NAME = "My Gate";
 
 const SLUG = "relay-app";
 
-const VERSION = "1.3.0";
+const VERSION = "1.4.0";
 const RUNTIMEVERSION = VERSION;
-const VERSION_CODE = 4;
+const VERSION_CODE = 5;
 
 
 // Your Expo account and EAS project. Fill these in before building or
@@ -37,6 +37,12 @@ const HISTORY = [
     heading: "What's New",
     description:
       "• PIN Entry: the PIN boxes now stay visible above the keyboard.",
+  },
+  {
+    version: "1.4.0.0",
+    heading: "What's New",
+    description:
+      "• Settings screen: tap the top-right button for theme and updates.\n• Theme: your System / Light / Dark choice is now remembered.\n• Updates: new update dialog, plus a manual \"Check for updates\" in Settings.",
   },
 ];
 
